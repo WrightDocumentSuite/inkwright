@@ -1,0 +1,13 @@
+Inkwright
+Copyright 2026 Pavel Deecalov
+
+This product includes software developed by the Mozilla Foundation as part of
+pdf.js (https://github.com/mozilla/pdf.js), licensed under the Apache License,
+Version 2.0. The algorithms concerned were ported to C# rather than copied:
+the structure and behaviour were kept, the implementation is this project's own.
+They are listed in THIRD-PARTY-NOTICES.md.
+
+This product includes the Adobe CMap Resources
+(https://github.com/adobe-type-tools/cmap-resources), licensed under the
+BSD 3-Clause License. Their licence text travels with them in
+src/Inkwright.Cjk/cmaps/LICENSE-ADOBE-CMAP.txt.

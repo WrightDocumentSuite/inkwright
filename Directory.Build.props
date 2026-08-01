@@ -14,10 +14,11 @@
   </PropertyGroup>
 
   <PropertyGroup Label="Package metadata defaults">
-    <Authors>Inkwright Contributors</Authors>
+    <Authors>Pavel Deecalov</Authors>
+    <Copyright>Copyright 2026 Pavel Deecalov</Copyright>
     <Product>Inkwright</Product>
     <Version>0.1.0</Version>
-    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
     <PackageProjectUrl>https://github.com/WrightDocumentSuite/inkwright</PackageProjectUrl>
     <RepositoryUrl>https://github.com/WrightDocumentSuite/inkwright.git</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
@@ -27,6 +28,10 @@
 
   <ItemGroup Condition="'$(IsPackable)' == 'true'">
     <None Include="$(MSBuildThisFileDirectory)README.md" Pack="true" PackagePath="\" Visible="false" />
+
+    <!-- Section 4(d) of the Apache License: a derivative work carries the NOTICE of what it
+         derives from, so it has to travel inside the package and not only in the repository. -->
+    <None Include="$(MSBuildThisFileDirectory)NOTICE" Pack="true" PackagePath="\" Visible="false" />
   </ItemGroup>
 
 </Project>
