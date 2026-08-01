@@ -4,7 +4,10 @@
 dotnet run -c Release --project benchmarks/Inkwright.Benchmarks -- --filter *
 ```
 
-Machine: Intel Core i7-8700, Windows Server 2022, .NET 10.0.10, BenchmarkDotNet 0.15.8.
+Machine: Intel Core i7-8700, Windows Server 2022, .NET 10.0.10, BenchmarkDotNet 0.15.8. The numbers
+below are from a full run at the released commit, cross-checked against two further runs on the same
+machine; allocation figures reproduce to the byte, timings within the stated deviations. The machine
+hosts other workloads, so treat absolute times as an upper bound and the ratios as the durable part.
 
 Comparison is against [PDFsharp 6.2](https://www.nuget.org/packages/PDFsharp) and
 [PdfPig 0.1.11](https://www.nuget.org/packages/PdfPig) — the only PDF libraries for .NET that can be
@@ -19,14 +22,18 @@ the same page.
 
 | | 10 pages | 200 pages | Allocations (200 pg.) |
 | --- | ---: | ---: | ---: |
-| **Inkwright, canvas** | **1.4 ms** | **27.3 ms** | **13.6 MB** |
-| PDFsharp | 3.6 ms | 57.7 ms | 38.1 MB |
-| Inkwright, layout engine | 8.5 ms | 204.0 ms | 108.7 MB |
+| **Inkwright, canvas** | **2.4 ms** | **46 ms** | **13.6 MB** |
+| PDFsharp | 6.0 ms | 177 ms¹ | 38.4 MB |
+| Inkwright, layout engine | 15.5 ms | 345 ms | 110.3 MB |
 
-The low-level canvas is twice as fast as PDFsharp with one-third the allocations. The layout engine
-costs roughly seven times more than the canvas — it measures every cell, breaks lines, flows the table
-across pages, and walks the document twice to determine page count. That is the price for not
-computing coordinates by hand; when coordinates are already known, the canvas is the right tool.
+¹ PDFsharp's 200-page mean drifts between runs (92–179 ms, StdDev up to ±60 ms within a single
+run); its 10-page result is stable. The claim that survives every run is the conservative one below.
+
+The low-level canvas is at least twice as fast as PDFsharp — 2.5× on the stable 10-page workload —
+with roughly a third of the allocations. The layout engine costs about seven times more than the
+canvas: it measures every cell, breaks lines, flows the table across pages, and walks the document
+twice to determine page count. That is the price for not computing coordinates by hand; when
+coordinates are already known, the canvas is the right tool.
 
 ## Reading
 
@@ -34,20 +41,20 @@ computing coordinates by hand; when coordinates are already known, the canvas is
 
 | | Time | Allocations |
 | --- | ---: | ---: |
-| **Inkwright, open** | **217 µs** | **188 KB** |
-| PdfPig, open | 724 µs | 485 KB |
-| **Inkwright, extract text** | **93 ms** | **116 MB** |
-| PdfPig, extract text | 135 ms | 103 MB |
-| **Inkwright, rewrite** | **717 µs** | **439 KB** |
+| **Inkwright, open** | **382 µs** | **188 KB** |
+| PdfPig, open | 1,048 µs | 485 KB |
+| **Inkwright, extract text** | **177 ms** | **155 MB** |
+| PdfPig, extract text | 191 ms | 103 MB |
+| **Inkwright, rewrite** | **1.2 ms** | **441 KB** |
 
-Opening is three times faster with 2.6× less memory: only the cross-reference table is read; objects
-are parsed on access.
+Opening is almost three times faster with 2.6× less memory: only the cross-reference table is read;
+objects are parsed on access.
 
-Extraction is 1.5× faster and slightly more memory-hungry — letters are returned with coordinates,
-font size, and font name, not as a single flat string.
+Extraction comes out slightly ahead of PdfPig on time and allocates half again as much — letters are
+returned with coordinates, font size, and font name, not as a single flat string.
 
-Rewriting a 90-page file in 0.7 ms is not magic but a consequence of objects the model never parsed
-being copied byte for byte.
+Rewriting a 90-page file in about a millisecond is not magic but a consequence of objects the model
+never parsed being copied byte for byte.
 
 ## Corpus
 
@@ -63,9 +70,9 @@ and fuzzing sets are opened, rewritten, and read again.
 | Round-trip failures among files allowed to rewrite | 0 |
 | Page count mismatches | 0 |
 | Unhandled exceptions | 0 |
-| Total pages | 55 827 |
+| Total pages | 57 249 |
 
-Of the 250 encrypted files in the corpus, 129 open with an empty or obvious password; the rest are
-mostly certificate-encrypted files the library does not support.
+Of the 275 encrypted files in the corpus, 126 open with an empty or an obvious password; the rest
+want passwords the corpus does not ship, and a handful are certificate-encrypted.
 
-A full corpus pass takes about 15 seconds in Release.
+A full corpus pass takes about 20 seconds in Release.

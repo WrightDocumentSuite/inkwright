@@ -169,13 +169,13 @@ numbers move with the machine, so treat them as a shape rather than a promise.
 
 | | Time | Allocated |
 | --- | ---: | ---: |
-| **Inkwright, canvas, 200 pp.** | **27.3 ms** | **13.6 MB** |
-| PDFsharp 6.2, 200 pp. | 57.7 ms | 38.1 MB |
-| Inkwright, composer, 200 pp. | 204.0 ms | 108.7 MB |
-| **Inkwright, open a file** | **217 µs** | **188 KB** |
-| PdfPig 0.1.11, open a file | 724 µs | 485 KB |
-| **Inkwright, extract text** | **93 ms** | **116 MB** |
-| PdfPig 0.1.11, extract text | 135 ms | 103 MB |
+| **Inkwright, canvas, 200 pp.** | **46 ms** | **13.6 MB** |
+| PDFsharp 6.2, 200 pp. | 177 ms | 38.4 MB |
+| Inkwright, composer, 200 pp. | 345 ms | 110.3 MB |
+| **Inkwright, open a file** | **382 µs** | **188 KB** |
+| PdfPig 0.1.11, open a file | 1,048 µs | 485 KB |
+| **Inkwright, extract text** | **177 ms** | **155 MB** |
+| PdfPig 0.1.11, extract text | 191 ms | 103 MB |
 
 ## Documentation
 
