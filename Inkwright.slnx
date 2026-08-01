@@ -1,0 +1,23 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Inkwright/Inkwright.csproj" />
+    <Project Path="src/Inkwright.Cjk/Inkwright.Cjk.csproj" />
+    <Project Path="src/Inkwright.Layout/Inkwright.Layout.csproj" />
+    <Project Path="src/Inkwright.Forms/Inkwright.Forms.csproj" />
+    <Project Path="src/Inkwright.Forms.Generator/Inkwright.Forms.Generator.csproj" />
+    <Project Path="src/Inkwright.Signing/Inkwright.Signing.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Inkwright.Tests/Inkwright.Tests.csproj" />
+    <Project Path="tests/Inkwright.Cjk.Tests/Inkwright.Cjk.Tests.csproj" />
+    <Project Path="tests/Inkwright.Layout.Tests/Inkwright.Layout.Tests.csproj" />
+    <Project Path="tests/Inkwright.Forms.Tests/Inkwright.Forms.Tests.csproj" />
+    <Project Path="tests/Inkwright.Signing.Tests/Inkwright.Signing.Tests.csproj" />
+  </Folder>
+  <Folder Name="/benchmarks/">
+    <Project Path="benchmarks/Inkwright.Benchmarks/Inkwright.Benchmarks.csproj" />
+  </Folder>
+  <Folder Name="/samples/">
+    <Project Path="samples/Inkwright.Samples/Inkwright.Samples.csproj" />
+  </Folder>
+</Solution>

@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Inkwright.Signing.Tests" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <RootNamespace>Inkwright.Signing</RootNamespace>
+    <IsPackable>true</IsPackable>
+    <PackageId>Inkwright.Signing</PackageId>
+    <Description>Digital signatures for Inkwright built entirely on the .NET base class library: detached CMS, PAdES B-B through B-LTA building blocks, RFC 3161 timestamps, external signer hooks and signature verification. No BouncyCastle.</Description>
+    <PackageTags>pdf;signature;pades;ltv;cms;rfc3161;timestamp</PackageTags>
+    <IsAotCompatible>true</IsAotCompatible>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.Security.Cryptography.Pkcs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Inkwright\Inkwright.csproj" />
+    <ProjectReference Include="..\Inkwright.Forms\Inkwright.Forms.csproj" />
+  </ItemGroup>
+
+</Project>

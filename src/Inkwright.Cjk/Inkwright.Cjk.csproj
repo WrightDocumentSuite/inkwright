@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Inkwright.Cjk.Tests" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <RootNamespace>Inkwright.Cjk</RootNamespace>
+    <IsPackable>true</IsPackable>
+    <PackageId>Inkwright.Cjk</PackageId>
+    <Description>The predefined CJK character maps of ISO 32000-2 Table 116 for Inkwright: Adobe's GB1, CNS1, Japan1, Korea1 and KR encodings plus the character-collection maps that turn CIDs into text, so Chinese, Japanese and Korean documents extract correctly without a ToUnicode map.</Description>
+    <PackageTags>pdf;cmap;cjk;chinese;japanese;korean;text-extraction;aot</PackageTags>
+    <IsAotCompatible>true</IsAotCompatible>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Inkwright\Inkwright.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Adobe's cmap-resources in the compact binary form pdf.js publishes; see cmaps/LICENSE-ADOBE-CMAP.txt. -->
+    <EmbeddedResource Include="cmaps\*.bcmap" LogicalName="Inkwright.Cjk.cmaps.%(Filename)%(Extension)" />
+    <None Include="cmaps\LICENSE-ADOBE-CMAP.txt" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+</Project>

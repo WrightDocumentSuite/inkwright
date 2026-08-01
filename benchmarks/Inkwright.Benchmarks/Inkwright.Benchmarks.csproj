@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>Inkwright.Benchmarks</RootNamespace>
+    <ServerGarbageCollection>true</ServerGarbageCollection>
+    <TieredPgo>true</TieredPgo>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="BenchmarkDotNet" />
+    <PackageReference Include="PdfPig" />
+    <PackageReference Include="PDFsharp" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Inkwright\Inkwright.csproj" />
+    <ProjectReference Include="..\..\src\Inkwright.Layout\Inkwright.Layout.csproj" />
+  </ItemGroup>
+
+</Project>

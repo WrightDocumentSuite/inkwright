@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Inkwright.Tests" />
+    <InternalsVisibleTo Include="Inkwright.Cjk" />
+    <InternalsVisibleTo Include="Inkwright.Cjk.Tests" />
+    <InternalsVisibleTo Include="Inkwright.Layout" />
+    <InternalsVisibleTo Include="Inkwright.Layout.Tests" />
+    <InternalsVisibleTo Include="Inkwright.Forms" />
+    <InternalsVisibleTo Include="Inkwright.Forms.Tests" />
+    <InternalsVisibleTo Include="Inkwright.Signing" />
+    <InternalsVisibleTo Include="Inkwright.Signing.Tests" />
+    <InternalsVisibleTo Include="Inkwright.Benchmarks" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <RootNamespace>Inkwright</RootNamespace>
+    <IsPackable>true</IsPackable>
+    <PackageId>Inkwright</PackageId>
+    <Description>Modern .NET 10 PDF library with zero native dependencies: create, read, edit and incrementally save PDFs; extract text or Markdown; handle fonts, images, annotations, encryption and low-level COS objects.</Description>
+    <PackageTags>pdf;iso32000;pdf-to-markdown;tagged-pdf;text-extraction;encryption;streaming;aot</PackageTags>
+    <IsAotCompatible>true</IsAotCompatible>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <!-- A Microsoft first-party package, not a third-party stack: EnvelopedCms for the public-key
+       security handler of ISO 32000-2 §7.6.5. -->
+  <ItemGroup>
+    <PackageReference Include="System.Security.Cryptography.Pkcs" />
+  </ItemGroup>
+
+</Project>

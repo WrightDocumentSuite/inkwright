@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Inkwright.Forms.Tests" />
+    <InternalsVisibleTo Include="Inkwright.Signing" />
+    <InternalsVisibleTo Include="Inkwright.Signing.Tests" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <RootNamespace>Inkwright.Forms</RootNamespace>
+    <IsPackable>true</IsPackable>
+    <PackageId>Inkwright.Forms</PackageId>
+    <Description>AcroForm support for Inkwright: typed field model, filling with generated appearance streams, flattening, and a source generator that maps records to form fields without reflection.</Description>
+    <PackageTags>pdf;acroform;forms;fill;flatten;sourcegen;aot</PackageTags>
+    <IsAotCompatible>true</IsAotCompatible>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Inkwright\Inkwright.csproj" />
+    <!-- The generator ships inside this package as an analyzer asset. -->
+    <ProjectReference Include="..\Inkwright.Forms.Generator\Inkwright.Forms.Generator.csproj"
+                      ReferenceOutputAssembly="false"
+                      PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Artifacts output layout: bin/<project>/<configuration> without a TFM subfolder for single-target projects. -->
+    <None Include="$(ArtifactsPath)\bin\Inkwright.Forms.Generator\$(Configuration.ToLowerInvariant())\Inkwright.Forms.Generator.dll"
+          Pack="true"
+          PackagePath="analyzers/dotnet/cs"
+          Visible="false" />
+  </ItemGroup>
+
+</Project>

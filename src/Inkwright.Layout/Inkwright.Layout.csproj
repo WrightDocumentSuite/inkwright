@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Inkwright.Layout.Tests" />
+    <InternalsVisibleTo Include="Inkwright.Benchmarks" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <RootNamespace>Inkwright.Layout</RootNamespace>
+    <IsPackable>true</IsPackable>
+    <PackageId>Inkwright.Layout</PackageId>
+    <Description>Fluent document composer for Inkwright: two-phase measure/draw layout engine, tables, repeating headers and footers, automatic Tagged PDF and PDF/A profiles. No native dependencies.</Description>
+    <PackageTags>pdf;report;layout;pdfa;tagged-pdf;facturx</PackageTags>
+    <IsAotCompatible>true</IsAotCompatible>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Inkwright\Inkwright.csproj" />
+  </ItemGroup>
+
+</Project>
