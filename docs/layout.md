@@ -1,51 +1,50 @@
-# Компоновка
+# Layout
 
-`Inkwright.Layout` описывает документ как содержимое, а не как страницы. Движок раскладывает его
-дважды: первый проход считает страницы, второй рисует — поэтому колонтитул может сказать
-«страница 3 из 12», хотя в момент описания никто этого числа не знал.
+`Inkwright.Layout` describes a document as content, not as pages. The engine lays it out twice: the
+first pass counts pages, the second draws — so a footer can say "page 3 of 12" even though nobody
+knew that number when the document was described.
 
-## Measure и Draw
+## Measure and Draw
 
-Каждый элемент отвечает на два вопроса. `Measure` сообщает, что он сделал бы с предложенным местом,
-и ничего не меняет. `Draw` делает это.
+Every element answers two questions. `Measure` reports what it would do with the offered space and
+changes nothing. `Draw` does it.
 
 ```csharp
 public abstract SpacePlan Measure(LayoutSize available, LayoutContext context);
 public abstract void Draw(LayoutSize available, LayoutContext context);
 ```
 
-`SpacePlan` — не размер, а решение: `Empty`, `Wrap` (сюда не влезает вовсе), `Partial` (влезла
-часть, остальное на следующую страницу) или `Full`. Именно `Partial` и позволяет содержимому течь
-через страницы без второй модели раскладки.
+`SpacePlan` is not a size but a decision: `Empty`, `Wrap` (does not fit here at all), `Partial` (part
+fits, the rest on the next page), or `Full`. It is `Partial` that lets content flow across pages
+without a second layout model.
 
-Элемент, нарисовавший часть себя, помнит место; `Reset` возвращает его в начало. Считающий проход
-идёт без канвы: состояние продвигается, а рисования не происходит.
+An element that drew part of itself remembers its position; `Reset` returns it to the start. The
+counting pass runs without a canvas: state advances, but no drawing happens.
 
-## Система координат
+## Coordinate System
 
-Layout думает сверху вниз, PDF — снизу вверх. Переворот делается один раз в матрице страницы, после
-чего `(0, 0)` — левый верхний угол текущего элемента, а `y` растёт вниз. Текст и картинки
-переворачиваются обратно внутри `LayoutCanvas`; всё остальное — прямоугольники, линии, клипы —
-работает в y-вниз естественно.
+Layout thinks top-down; PDF thinks bottom-up. The flip happens once in the page matrix; afterward
+`(0, 0)` is the top-left corner of the current element and `y` grows downward. Text and images are
+flipped back inside `LayoutCanvas`; everything else — rectangles, lines, clips — works naturally in
+y-down.
 
-## Fluent-описание
+## Fluent Description
 
-Каждое украшение возвращает слот внутри себя, поэтому цепочка читается как вложенность, которую
-создаёт:
+Every decoration returns a slot inside itself, so the chain reads like the nesting it creates:
 
 ```csharp
 page.Content()
     .Padding(20)
     .Background("#F5F5F5", cornerRadius: 4)
     .Padding(12)
-    .Text("В рамке с отступами");
+    .Text("Framed with padding");
 ```
 
-Контейнеры:
+Containers:
 
 ```csharp
 container.Column(column => { column.Spacing(8); column.Item().Text("…"); });
-container.Row(row => { row.ConstantItem(120).Text("слева"); row.RelativeItem(2).Text("шире"); });
+container.Row(row => { row.ConstantItem(120).Text("left"); row.RelativeItem(2).Text("wider"); });
 container.Table(table => { … });
 container.Image(image, ImageFit.Contain);
 container.Canvas(60, (canvas, size) => canvas.FillRectangle(0, 0, size.Width, size.Height, PdfColor.Red));
@@ -54,37 +53,36 @@ container.Line(0.5, PdfColor.Gray(0.8f));
 container.Spacer(12);
 ```
 
-Размещение и размеры: `AlignLeft`, `AlignCenter`, `AlignRight`, `AlignTop`, `AlignMiddle`,
+Placement and sizing: `AlignLeft`, `AlignCenter`, `AlignRight`, `AlignTop`, `AlignMiddle`,
 `AlignBottom`, `Width`, `Height`, `MinHeight`, `MaxWidth`, `ShowIf`.
 
-## Текст
+## Text
 
 ```csharp
 container.Text(text =>
 {
     text.Style(TextStyle.Default.FontSize(11).FontFamily("Segoe UI"));
     text.Justify();
-    text.Span("Обычный текст, ");
-    text.Span("выделенный", TextStyle.Default.Bold().FontColor("#B3261E"));
-    text.Span(", и снова обычный.");
+    text.Span("Normal text, ");
+    text.Span("emphasized", TextStyle.Default.Bold().FontColor("#B3261E"));
+    text.Span(", and normal again.");
     text.Line(string.Empty);
-    text.PageNumbers("Страница {0} из {1}");
+    text.PageNumbers("Page {0} of {1}");
 });
 ```
 
-Строки ломаются жадно по точкам, где перенос разрешён: пробелы, дефисы, косая черта и границы
-глифов CJK. Слово, которое не влезает целиком, режется посимвольно. Выключка растягивает промежутки
-между словами и никогда сами слова; последняя строка абзаца остаётся рваной.
+Lines break greedily at points where wrapping is allowed: spaces, hyphens, slashes, and CJK glyph
+boundaries. A word that does not fit whole is split character by character. Justification stretches
+gaps between words and never the words themselves; the last line of a paragraph stays ragged.
 
-Стиль — immutable record, поэтому наследование бесплатно, а одинаковые стили сравниваются по
-значению. На строку выводится один текстовый объект, а идущие подряд фрагменты одного стиля
-склеиваются в один оператор показа: страница с абзацем из ста слов содержит несколько операторов,
-а не шестьсот.
+Style is an immutable record, so inheritance is free and identical styles compare by value. One text
+object is emitted per line, and consecutive fragments of the same style are merged into one show
+operator: a page with a hundred-word paragraph contains a few operators, not six hundred.
 
-Шрифт разрешается по семейству: сначала встроенные четырнадцать, потом установленный в системе
-(`SystemFonts`), потом Helvetica. Явный `TextStyle.Font(font)` перекрывает всё.
+The font resolves by family: the built-in fourteen fonts first, then system-installed (`SystemFonts`), then
+Helvetica. Explicit `TextStyle.Font(font)` overrides everything.
 
-## Таблицы
+## Tables
 
 ```csharp
 container.Table(table =>
@@ -95,28 +93,28 @@ container.Table(table =>
 
     table.Header()
         .Background(PdfColor.Parse("#EFF3F8"))
-        .Text("Описание", TextStyle.Default.Bold())
-        .Text("Кол-во")
-        .Text("Сумма");
+        .Text("Description", TextStyle.Default.Bold())
+        .Text("Qty")
+        .Text("Amount");
 
     foreach (var line in lines)
         table.Row().Text(line.Name).Text(line.Quantity).Text(line.Total);
 });
 ```
 
-Заголовочные строки повторяются вверху каждой страницы, которую таблица занимает. Их состояние
-перед каждой страницей сбрасывается — иначе повтор вышел бы пустым, потому что текст в ячейке
-помнит, сколько уже нарисовал.
+Header rows repeat at the top of every page the table occupies. Their state is reset before each
+page — otherwise the repeat would come out empty because text in a cell remembers how much it already
+drew.
 
-## Разрывы страниц
+## Page Breaks
 
-`container.PageBreak()` заканчивает страницу. Разрыв, оказавшийся вверху страницы, уже сделал своё
-дело и уступает место вместо того, чтобы оставить за собой пустой лист.
+`container.PageBreak()` ends the page. A break that lands at the top of a page has already done its
+job and yields space instead of leaving a blank sheet behind.
 
-## Когда не влезает
+## When Nothing Fits
 
-Элемент, которому не хватит места ни на какой странице, вызывает `LayoutException` с деревом
-элементов в `ElementTrace`:
+An element that will not fit on any page throws `LayoutException` with an element tree in
+`ElementTrace`:
 
 ```
 Nothing fitted on page 2, so the layout would never finish.
@@ -130,11 +128,11 @@ Container
       ConstrainedElement
 ```
 
-Имя в трассе берётся из `DebugName`, если оно задано, иначе из типа элемента.
+The name in the trace comes from `DebugName` when set; otherwise from the element type.
 
-## Своё рисование
+## Custom Drawing
 
-Там, где модели не хватает, можно взять канву:
+Where the model is not enough, you can take the canvas:
 
 ```csharp
 container.Canvas(80, (canvas, size) =>
@@ -144,5 +142,5 @@ container.Canvas(80, (canvas, size) =>
 });
 ```
 
-`LayoutCanvas` даёт прямоугольники, скруглённые прямоугольники, линии, обводки, текст, картинки и
-клипы в координатах layout; `canvas.Content` — полный низкоуровневый `ContentCanvas`.
+`LayoutCanvas` provides rectangles, rounded rectangles, lines, strokes, text, images, and clips in
+layout coordinates; `canvas.Content` is the full low-level `ContentCanvas`.

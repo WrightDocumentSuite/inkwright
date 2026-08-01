@@ -1,21 +1,17 @@
-# Изображения
+# Images
 
-## Встраивание
+## Embedding
 
-JPEG кладётся в файл байт в байт, PNG — без перекодирования: дефлейт-поток, который PNG уже несёт,
-это тот же дефлейт-поток, которого хочет PDF. Разбирается только картинка с альфа-каналом, и то
-ровно настолько, чтобы отделить его в мягкую маску.
+JPEG is placed in the file byte for byte; PNG is embedded without re-encoding—the deflate stream that PNG already carries is the same deflate stream PDF wants. Only images with an alpha channel are parsed, and only enough to split it into a soft mask.
 
 ```csharp
 PdfImage image = PdfImage.Load(document, @"photo.jpg");
 canvas.DrawImage(image, 72, 400, width: 200, height: 150);
 ```
 
-## Извлечение
+## Extraction
 
-Обратный путь — из XObject в пиксели. Возвращается RGBA по байту на канал, первая строка сверху:
-это то, чего хочет любой потребитель картинки, и то, к чему сходятся все декодеры и цветовые
-пространства.
+The reverse path goes from XObject to pixels. The result is RGBA with one byte per channel, first row at the top—what any image consumer expects and what all decoders and color spaces converge on.
 
 ```csharp
 foreach (PdfPageImage found in page.Images)
@@ -30,129 +26,93 @@ foreach (PdfPageImage found in page.Images)
 }
 ```
 
-`page.Images` находит и те картинки, которые страница рисует внутри форм, и находит каждую один
-раз, сколько бы раз поток содержимого её ни рисовал.
+`page.Images` finds images that the page draws inside forms as well, and finds each one only once no matter how many times the content stream draws it.
 
-## Что происходит при декодировании
+## What happens during decoding
 
-1. **Распаковка**: фильтры снимаются обычным конвейером; на кодеке изображения он останавливается,
-   и дальше работает нужный декодер.
-2. **Развёртка сэмплов**: 1, 2, 4, 8 или 16 бит на компонент разворачиваются в числа. Строка
-   дополняется до границы байта, поэтому картинка шириной три пикселя по одному биту занимает по
-   байту на строку, а не три бита подряд.
-3. **Массив Decode**: каждый компонент отображается на объявленный интервал. Умолчания берутся из
-   таблицы 90 — у индексированного пространства это весь диапазон, который выражает разрядность
-   сэмпла, а у Lab светлота идёт до ста, а не до единицы.
-4. **Цвет**: значения проходят через цветовое пространство и становятся RGB.
-5. **Прозрачность**: применяется одна из трёх масок §8.9.6.
+1. **Unpacking**: filters are removed by the usual pipeline; it stops at the image codec, and the appropriate decoder takes over.
+2. **Sample expansion**: 1, 2, 4, 8, or 16 bits per component are expanded into numbers. Each row is padded to a byte boundary, so a one-bit-wide image three pixels wide uses one byte per row, not three consecutive bits.
+3. **Decode array**: each component is mapped to its declared range. Defaults come from Table 90—for indexed space that is the full range expressible by the sample depth; for Lab, lightness goes to one hundred, not one.
+4. **Color**: values pass through the color space and become RGB.
+5. **Transparency**: one of the three masks from §8.9.6 is applied.
 
-## Три вида масок
+## Three kinds of masks
 
-- **Трафарет** (`/ImageMask true`) — не цвет, а форма: красит там, где сэмпл равен нулю, и
-  пропускает страницу везде остальное.
-- **Мягкая маска** (`/SMask`) — полутоновая картинка, чьи значения и есть альфа. Если её размер не
-  совпадает с размером картинки, она растягивается.
-- **Явная маска** (`/Mask` со стримом) — трафарет, помечающий, что скрыть; закрашенные им места
-  становятся прозрачными.
-- **Ключ по цвету** (`/Mask` с массивом) — диапазоны, попадание в которые убирает пиксель. Проверка
-  идёт по сэмплам как они записаны, а не по цвету, в который они превратились — так требует
-  спецификация.
+- **Stencil** (`/ImageMask true`)—not color but shape: it paints where the sample is zero and lets the page show through everywhere else.
+- **Soft mask** (`/SMask`)—a grayscale image whose values are alpha. If its size does not match the image size, it is stretched.
+- **Explicit mask** (`/Mask` with a stream)—a stencil marking what to hide; areas it covers become transparent.
+- **Color key** (`/Mask` with an array)—ranges; falling inside them removes the pixel. The check uses samples as stored, not the colors they represent after conversion—as the specification requires.
 
-Ключ `/Matte` мягкой маски (§11.6.5) снимается до преобразования цветового пространства: из
-предварительно смешанных компонентов и альфы восстанавливается исходный цвет. Поэтому на
-полупрозрачных границах не остаётся ореол цвета, с которым изображение было подготовлено.
+The soft mask `/Matte` key (§11.6.5) is removed before color-space conversion: the original color is recovered from pre-multiplied components and alpha. That avoids a color halo on semi-transparent edges from how the image was prepared.
 
-## Цветовые пространства
+## Color spaces
 
-Все сводятся к RGB, потому что это то, что нужно потребителю пикселей.
+All are converted to RGB because that is what the pixel consumer needs.
 
-| Пространство | Как обрабатывается |
+| Space | How it is handled |
 | --- | --- |
-| DeviceGray, DeviceRGB, DeviceCMYK | напрямую; CMYK — вычитанием (§8.6.4.4) |
-| CalGray, CalRGB | гамма и матрица переводят компоненты в CIE XYZ; белая точка адаптируется к D65, затем получается sRGB |
-| Lab | через объявленную белую точку и передаточную функцию sRGB |
-| ICCBased | через `/Alternate`, а без него — по `/N` |
-| Indexed | поиск в палитре; сэмпл — это номер, а не значение |
-| Separation, DeviceN | через tint transform; `/None` не красит ничего |
-| Pattern | берётся базовое пространство |
+| DeviceGray, DeviceRGB, DeviceCMYK | directly; CMYK via subtraction (§8.6.4.4) |
+| CalGray, CalRGB | gamma and matrix map components to CIE XYZ; white point is adapted to D65, then sRGB is obtained |
+| Lab | via the declared white point and the sRGB transfer function |
+| ICCBased | via `/Alternate`; without it, via `/N` |
+| Indexed | lookup in the palette; the sample is an index, not a value |
+| Separation, DeviceN | via tint transform; `/None` paints nothing |
+| Pattern | the base space is used |
 
-## Функции
+## Functions
 
-Функции §7.10 живут отдельно и нужны не только картинкам: их спрашивают tint transform, шейдинги и
-передаточные функции.
+Functions from §7.10 live separately and are needed for more than images: tint transforms, shadings, and transfer functions ask for them.
 
 ```csharp
 PdfFunction? function = PdfFunction.Read(value);
-double[] colour = function!.Evaluate(0.5);
+double[] color = function!.Evaluate(0.5);
 ```
 
-Читаются все четыре типа: табличный (0), экспоненциальный (2), сшитый (3) и калькулятор на
-PostScript (4). Тригонометрия калькулятора считает в градусах, как требует таблица 42, и `atan`
-возвращает угол от нуля до трёхсот шестидесяти.
+All four types are read: sampled (0), exponential (2), stitched (3), and PostScript calculator (4). The calculator’s trigonometry is in degrees, as Table 42 requires, and `atan` returns an angle from zero to three hundred sixty.
 
-Кубическая интерполяция (`/Order 3`) у табличного типа вычисляется тензорным произведением сплайнов
-Катмулла–Рома по всем входным осям. При `Size < 4` хотя бы по одной оси запрос кубической
-интерполяции игнорируется согласно §7.10.2.
+Cubic interpolation (`/Order 3`) for the sampled type is computed by the tensor product of Catmull–Rom splines across all input axes. When `Size < 4` on at least one axis, a request for cubic interpolation is ignored per §7.10.2.
 
-## Кодеки
+## Codecs
 
-| Кодек | Состояние |
+| Codec | Status |
 | --- | --- |
-| FlateDecode, LZWDecode, RunLengthDecode, ASCII85, ASCIIHex | декодируются |
-| DCTDecode (JPEG) | последовательный бейзлайн декодируется, включая субдискретизацию, рестарт-маркеры, CMYK и инверсию по маркеру Adobe |
-| DCTDecode прогрессивный | отказ с внятным сообщением |
-| CCITTFaxDecode | декодируется: одномерный MH, двумерный MR и MMR |
-| JBIG2Decode | декодируется; известные refinement-aggregation и context-reuse фикстуры отвергаются явно |
-| JPXDecode (JPEG 2000) | не декодируется |
+| FlateDecode, LZWDecode, RunLengthDecode, ASCII85, ASCIIHex | decoded |
+| DCTDecode (JPEG) | sequential baseline is decoded, including subsampling, restart markers, CMYK, and Adobe marker inversion |
+| DCTDecode progressive | rejected with a clear message |
+| CCITTFaxDecode | decoded: one-dimensional MH, two-dimensional MR and MMR |
+| JBIG2Decode | decoded; known refinement-aggregation and context-reuse fixtures are rejected explicitly |
+| JPXDecode (JPEG 2000) | not decoded |
 
-Отказ всегда явный: `PdfImageReader.CanDecode` отвечает заранее, а `Decode` бросает
-`NotSupportedException` с именем кодека. Сырые данные при этом доступны через сам стрим, так что
-JPEG 2000 можно отдать внешнему декодеру, не разбирая файл заново.
+Rejection is always explicit: `PdfImageReader.CanDecode` answers in advance, and `Decode` throws `NotSupportedException` with the codec name. Raw data remains available through the stream itself, so JPEG 2000 can be handed to an external decoder without re-parsing the file.
 
-Прогрессивный JPEG отвергается намеренно: декодировать его неправильно хуже, чем не декодировать.
+Progressive JPEG is rejected on purpose: decoding it incorrectly is worse than not decoding at all.
 
-### Факсовые кодировки
+### Fax encodings
 
-`CCITTFaxDecode` реализует кодирования ITU-T T.4 и T.6 целиком: одномерное (`K` равно нулю),
-двумерное смешанное (`K` больше нуля) и чистое двумерное группы 4 (`K` меньше нуля), со всеми
-параметрами таблицы 11 — `EncodedByteAlign`, `BlackIs1`, `EndOfLine`, `DamagedRowsBeforeError`,
-`EndOfBlock`.
+`CCITTFaxDecode` implements ITU-T T.4 and T.6 encodings in full: one-dimensional (`K` equals zero), two-dimensional mixed (`K` greater than zero), and pure two-dimensional Group 4 (`K` less than zero), with all parameters from Table 11—`EncodedByteAlign`, `BlackIs1`, `EndOfLine`, `DamagedRowsBeforeError`, `EndOfBlock`.
 
-Таблицы кодов транскрибированы из печатных таблиц 2, 3a, 3b, 4 и 5 рекомендации T.4 и сверены с
-эталонной реализацией, опубликованной вместе с ITU-T T.88. Они лежат в
-[CcittCodes.cs](../src/Inkwright/Images/Ccitt/CcittCodes.cs) в том же виде, в каком напечатаны в
-стандарте: одна двоичная строка на длину серии. Таблица, переписанная из спецификации, чего-то стоит
-только если её можно прочитать обратно и сверить со страницей, откуда она взята.
+Code tables are transcribed from printed Tables 2, 3a, 3b, 4, and 5 of Recommendation T.4 and verified against the reference implementation published with ITU-T T.88. They live in [CcittCodes.cs](../src/Inkwright/Images/Ccitt/CcittCodes.cs) in the same form as printed in the standard: one binary string per run length. A table copied from the specification is worth something only if you can read it back and check it against the page it came from.
 
-Строка хранится не пикселями, а позициями смены цвета: именно это делает двумерные режимы дешёвыми —
-строка обычно почти совпадает с предыдущей, и кодируется как разница между их точками смены.
+A row is stored not as pixels but as color-change positions—that is what makes two-dimensional modes cheap: a row usually almost matches the previous one and is encoded as the difference between their change points.
 
 ### JBIG2
 
-Реализованы все способы кодирования, которыми пользуется сканер.
+All encoding methods used by scanners are implemented.
 
-| Что | Раздел T.88 | Состояние |
+| What | T.88 section | Status |
 | --- | --- | --- |
-| Арифметический декодер MQ | Annex E | проверен побитово тест-вектором Annex H.2 — все 256 решений |
-| Целочисленное декодирование, идентификаторы символов | Annex A | |
-| Generic-регион: шаблоны 0–3, адаптивные пиксели, `TPGDON`, MMR | §6.2 | |
-| Уточнение: шаблоны 0 и 1, `TPGRON` | §6.3 | |
-| Текстовый регион: полосы, углы привязки, транспонирование, уточнение инстансов | §6.4 | |
-| Словарь символов: классы высоты, импорт и экспорт, агрегатное уточнение | §6.5 | |
-| Полутоновый регион и словарь узоров, серые плоскости в коде Грея | §6.6, §6.7, Annex C | |
-| Таблицы Хаффмана B.1–B.15 и пользовательские таблицы (сегмент 53) | Annex B | |
-| Промежуточные регионы и вспомогательные буферы | §8.2 | |
+| MQ arithmetic decoder | Annex E | verified bit-by-bit with Annex H.2 test vector—all 256 decisions |
+| Integer decoding, symbol IDs | Annex A | |
+| Generic region: templates 0–3, adaptive pixels, `TPGDON`, MMR | §6.2 | |
+| Refinement: templates 0 and 1, `TPGRON` | §6.3 | |
+| Text region: stripes, reference corners, transposition, instance refinement | §6.4 | |
+| Symbol dictionary: height classes, import and export, aggregate refinement | §6.5 | |
+| Halftone region and pattern dictionary, gray planes in Gray code | §6.6, §6.7, Annex C | |
+| Huffman tables B.1–B.15 and custom tables (segment 53) | Annex B | |
+| Intermediate regions and auxiliary buffers | §8.2 | |
 
-Не декодируются: словари, переиспользующие контекст кодирования другого сегмента (флаг, который
-почти никто не ставит), и расширенные шаблоны с двенадцатью адаптивными пикселями.
+Not decoded: dictionaries that reuse another segment’s encoding context (a flag almost nobody sets), and extended templates with twelve adaptive pixels.
 
-Ключевая проверка — семейство `bitmap-*.pdf` в корпусе: около шестидесяти файлов кодируют одну и ту
-же картинку 399×400 всеми возможными способами (каждый угол привязки, транспонирование, каждый
-оператор композиции, отрицательное смещение, уточнение, Хаффман, полутона, широкие номера
-сегментов), и все дают побайтово одинаковый результат. По всему корпусу декодируется 135 из 142
-изображений против 48 до этой ревизии.
+The key check is the `bitmap-*.pdf` family in the corpus: about sixty files encode the same 399×400 image in every possible way (each reference corner, transposition, each composition operator, negative offset, refinement, Huffman, halftone, wide segment numbers), and all yield byte-identical results. Across the corpus, 135 of 142 images decode versus 48 before this revision.
 
-Ограничения, которые PDF накладывает на JBIG2 (ISO 32000-2 §7.4.7), проверяются: цветовая палитра
-(сегмент типа 54) и флаг расширения цвета отвергаются, потому что стандарт их запрещает. Заголовок
-файла JBIG2 в потоке PDF запрещён, но встречается, и пропускается молча. Подробности —
-в [pdf20-audit.md](pdf20-audit.md).
+Restrictions PDF imposes on JBIG2 (ISO 32000-2 §7.4.7) are enforced: color palette (segment type 54) and the color extension flag are rejected because the standard forbids them. A JBIG2 file header inside a PDF stream is forbidden but appears and is skipped silently. Details are in [pdf20-audit.md](pdf20-audit.md).

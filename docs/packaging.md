@@ -1,17 +1,12 @@
-# Сборка NuGet-пакетов
+# Building NuGet Packages
 
-Решение выпускает пять пакетов: `Inkwright`, `Inkwright.Cjk`, `Inkwright.Forms`,
-`Inkwright.Layout` и `Inkwright.Signing`. Проекты тестов, примеры, бенчмарки и отдельная сборка
-генератора форм не пакуются. Генератор входит в `Inkwright.Forms` как analyzer asset.
+The solution ships five packages: `Inkwright`, `Inkwright.Cjk`, `Inkwright.Forms`, `Inkwright.Layout`, and `Inkwright.Signing`. Test projects, examples, benchmarks, and the standalone forms generator build are not packaged. The generator is included in `Inkwright.Forms` as an analyzer asset.
 
-Общие метаданные находятся в `Directory.Build.props`: версия, авторы, лицензия Apache-2.0, README,
-адрес проекта и репозитория. Описание и поисковые теги каждого пакета находятся в его `.csproj`,
-потому что назначение надстроек различается. NuGet показывает элемент `Description` из nuspec в
-карточке пакета, а `README.md` — как подробное описание под ней.
+Shared metadata lives in `Directory.Build.props`: version, authors, the Apache-2.0 licence, README, project URL, and repository URL. Each package's description and search tags live in its `.csproj` because the add-ons serve different purposes. NuGet shows the `Description` element from the nuspec on the package card and `README.md` as the detailed description below it.
 
-## Собрать
+## Build
 
-Из корня `Inkwright`:
+From the `Inkwright` root:
 
 ```bash
 dotnet restore Inkwright.slnx
@@ -21,26 +16,17 @@ dotnet pack Inkwright.slnx -c Release --no-restore \
   --output artifacts/packages
 ```
 
-Параметр `Version` намеренно задаётся в команде выпуска: так один и тот же коммит можно собирать
-как prerelease (`0.2.0-preview.1`) или стабильную версию без правки проекта. Если параметр не задан,
-используется значение из `Directory.Build.props`.
+The `Version` parameter is intentionally set on the release command: the same commit can be built as prerelease (`0.2.0-preview.1`) or stable without editing the project. If the parameter is omitted, the value from `Directory.Build.props` is used.
 
-Результат — по одному `.nupkg` на публикуемый проект в `artifacts/packages`. Перед публикацией
-нужно открыть пакеты как ZIP и проверить `.nuspec`, `README.md`, `lib/net10.0`, зависимости и,
-для `Inkwright.Forms`, `analyzers/dotnet/cs/Inkwright.Forms.Generator.dll`.
+The result is one `.nupkg` per published project in `artifacts/packages`. Before publishing, open the packages as ZIP and check `.nuspec`, `README.md`, `lib/net10.0`, dependencies, and for `Inkwright.Forms`, `analyzers/dotnet/cs/Inkwright.Forms.Generator.dll`.
 
-## Проверить установку локально
+## Verify Installation Locally
 
-Новый пустой проект позволяет проверить не только nuspec, но и реальное разрешение зависимостей.
-Создавайте его **вне дерева репозитория**: иначе central package management проекта перехватит
-`dotnet add package` и команда попытается изменить рабочий `Directory.Packages.props`.
+A new empty project lets you verify not only the nuspec but real dependency resolution. Create it **outside the repository tree**: otherwise the project's central package management will intercept `dotnet add package` and the command will try to modify the working `Directory.Packages.props`.
 
-### Сначала выбросить старую версию из кэша
+### Clear the old version from cache first
 
-Это не предосторожность, а обязательный шаг, и без него проверка бессмысленна. Версия NuGet
-неизменяема **по идентичности**: раз `Inkwright/0.1.0` оказался в `~/.nuget/packages`, restore берёт
-оттуда и в локальный feed уже не смотрит. Пересобранный пакет с тем же номером остаётся лежать
-нетронутым, а вы проверяете вчерашние байты и ничего об этом не узнаёте.
+This is not a precaution but a required step; without it verification is meaningless. NuGet versions are immutable **by identity**: once `Inkwright/0.1.0` is in `~/.nuget/packages`, restore takes it from there and no longer looks at the local feed. A rebuilt package with the same number sits untouched while you verify yesterday's bytes and never know.
 
 ```bash
 for id in inkwright inkwright.cjk inkwright.forms inkwright.layout inkwright.signing; do
@@ -48,16 +34,15 @@ for id in inkwright inkwright.cjk inkwright.forms inkwright.layout inkwright.sig
 done
 ```
 
-Удаляются только эти пять записей: `dotnet nuget locals global-packages --clear` вычистит кэш
-целиком и заставит все прочие проекты на машине качать зависимости заново.
+Only these five entries are removed: `dotnet nuget locals global-packages --clear` wipes the entire cache and forces every other project on the machine to download dependencies again.
 
-Убедиться, что теперь взята свежая сборка, можно по времени файла:
+You can confirm the fresh build was picked up by file timestamp:
 
 ```bash
 ls -l ~/.nuget/packages/inkwright/0.1.0/lib/net10.0/Inkwright.dll
 ```
 
-Оно должно совпадать со временем `dotnet pack`, а не быть раньше.
+It should match the time of `dotnet pack`, not be earlier.
 
 ```bash
 cd /path/outside/PDFLib
@@ -71,23 +56,17 @@ dotnet add package Inkwright.Signing --version 0.1.0
 dotnet build -c Release --no-restore
 ```
 
-Путь к источнику задавайте в виде Windows (`E:\...`): `dotnet nuget add source` отвергает путь с
-прямыми слэшами как невалидный.
+Specify the source path in Windows form (`E:\...`): `dotnet nuget add source` rejects paths with forward slashes as invalid.
 
-Созданный конфиг сохраняет nuget.org для внешних зависимостей и добавляет локальный источник.
-Для полной проверки добавьте все пять package ID. Временный `PackageSmoke` в репозиторий не входит.
+The created config keeps nuget.org for external dependencies and adds the local source. For full verification add all five package IDs. Temporary `PackageSmoke` is not part of the repository.
 
-### Проверять поведение, а не факт компиляции
+### Verify behavior, not just compilation
 
-Пустой `Main`, который собрался, доказывает только то, что nuspec не сломан. Полезнее короткая
-программа, которая прогоняет через собранные бинарники то, что менялось в этом выпуске: она заодно
-проверяет **публичную поверхность** API. Внутренние типы вроде `PdfNames` тесты видят через
-`InternalsVisibleTo`, а потребитель пакета — нет, и код, случайно опёршийся на такой тип в примерах
-документации, компилируется у вас и не компилируется у пользователя.
+An empty `Main` that builds only proves the nuspec is not broken. More useful is a short program that exercises through the built binaries what changed in this release: it also checks the **public API surface**. Internal types like `PdfNames` are visible to tests via `InternalsVisibleTo`, but not to package consumers — code in documentation examples that accidentally relied on such a type compiles for you and not for the user.
 
-## Опубликовать
+## Publish
 
-После проверки конкретной версии:
+After verifying a specific version:
 
 ```bash
 dotnet nuget push "artifacts/packages/*.nupkg" \
@@ -96,5 +75,4 @@ dotnet nuget push "artifacts/packages/*.nupkg" \
   --skip-duplicate
 ```
 
-Версия NuGet неизменяема: повторная сборка с тем же номером не заменит опубликованный пакет.
-Секрет API нельзя хранить в репозитории или передавать как MSBuild-свойство, которое попадёт в лог.
+NuGet versions are immutable: rebuilding with the same number does not replace a published package. The API secret must not be stored in the repository or passed as an MSBuild property that ends up in logs.

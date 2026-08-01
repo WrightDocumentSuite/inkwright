@@ -1,9 +1,8 @@
-# Подписи
+# Signatures
 
-`Inkwright.Signing` не тянет BouncyCastle: `SignedCms`, `AsnWriter` и `Rfc3161TimestampRequest` из
-базовой библиотеки покрывают всё, что нужно PDF-подписи.
+`Inkwright.Signing` does not pull in BouncyCastle: `SignedCms`, `AsnWriter`, and `Rfc3161TimestampRequest` from the base library cover everything PDF signing needs.
 
-## Подписать
+## Sign
 
 ```csharp
 using Inkwright.Signing;
@@ -12,54 +11,43 @@ using PdfDocument document = PdfDocument.Load("contract.pdf");
 
 byte[] signed = PdfSigner.Sign(document, new PdfSignatureOptions
 {
-    Certificate = certificate,          // X509Certificate2 с закрытым ключом
+    Certificate = certificate,          // X509Certificate2 with private key
     Chain = [intermediate, root],
-    Reason = "Согласовано",
-    Location = "Москва",
+    Reason = "Approved",
+    Location = "Moscow",
     FieldName = "Approval",
 });
 
 File.WriteAllBytes("contract-signed.pdf", signed);
 ```
 
-Подпись всегда пишется как инкрементальное обновление. Это не стилистический выбор: байты, которые
-были в файле до подписи, должны остаться на своих местах, иначе ломается всё, что подписали раньше.
+A signature is always written as an incremental update. That is not a stylistic choice: the bytes that were in the file before signing must stay in place, or everything signed earlier breaks.
 
-## Как это устроено
+## How It Works
 
-1. В документ добавляется поле подписи с виджетом и словарь подписи, в котором `/ByteRange` и
-   `/Contents` — заглушки известной длины.
-2. Документ дописывается в конец файла.
-3. В получившихся байтах находится заглушка, вычисляется настоящий `/ByteRange` и вписывается на то
-   же место, дополненный пробелами до прежней длины.
-4. Считается CMS SignedData поверх всего файла, кроме шестнадцатеричного значения самой подписи.
-5. Результат вписывается в зарезервированное место.
+1. A signature field with a widget and a signature dictionary are added to the document; `/ByteRange` and `/Contents` are placeholders of known length.
+2. The document is appended to the end of the file.
+3. In the resulting bytes the placeholder is located, the real `/ByteRange` is computed and written back in the same place, padded with spaces to the previous length.
+4. CMS SignedData is computed over the entire file except the hexadecimal value of the signature itself.
+5. The result is written into the reserved space.
 
-Если `FieldName` совпадает с уже существующим пустым полем `/FT /Sig`, новое поле и новый виджет не
-создаются: подписант записывает `/V` в найденное поле и обновляет appearance его существующих
-виджетов. Их `/Rect` определяет положение; `Appearance` используется как координаты только при
-создании нового поля. Поле другого типа или уже заполненное поле отклоняется явно.
+If `FieldName` matches an existing empty `/FT /Sig` field, no new field or widget is created: the signer writes `/V` into the found field and updates the appearance of its existing widgets. Their `/Rect` defines placement; `Appearance` is used as coordinates only when creating a new field. A field of another type or an already filled field is rejected explicitly.
 
-Подписанные атрибуты: тип содержимого, дайджест, время подписания и `signingCertificateV2` — тот
-самый атрибут PAdES, который привязывает подпись к конкретному сертификату. Его ASN.1 пишется через
-`AsnWriter`, потому что `SignedCms` его не моделирует.
+Signed attributes: content type, digest, signing time, and `signingCertificateV2` — the PAdES attribute that binds the signature to a specific certificate. Its ASN.1 is written via `AsnWriter` because `SignedCms` does not model it.
 
-Время PAdES хранится только в подписанном CMS-атрибуте `signing-time`. Ключ `/M` в словаре подписи
-не дублирует его: ISO 32000-2 §12.8.3.4.2 разрешает одно представление времени, но запрещает оба
-одновременно.
+PAdES time is stored only in the signed CMS attribute `signing-time`. Key `/M` in the signature dictionary does not duplicate it: ISO 32000-2 §12.8.3.4.2 allows one time representation but forbids both at once.
 
-## Алгоритмы
+## Algorithms
 
-Помимо семейства SHA-2 доступны алгоритмы, добавленные к PDF 2.0 техническими спецификациями.
+Besides the SHA-2 family, algorithms added to PDF 2.0 by technical specifications are available.
 
-| Алгоритм | Откуда | Доступность |
+| Algorithm | Source | Availability |
 | --- | --- | --- |
-| SHA256, SHA384, SHA512 | ISO 32000-2 | всегда |
-| SHA3-256, SHA3-384, SHA3-512 | ISO/TS 32001 | если даёт криптобиблиотека системы |
-| SHAKE256 | ISO/TS 32001, фиксированная длина 64 байта | если даёт криптобиблиотека системы |
+| SHA256, SHA384, SHA512 | ISO 32000-2 | always |
+| SHA3-256, SHA3-384, SHA3-512 | ISO/TS 32001 | if the system crypto library provides them |
+| SHAKE256 | ISO/TS 32001, fixed 64-byte length | if the system crypto library provides it |
 
-SHA-3 приходит в .NET из криптобиблиотеки операционной системы, поэтому его наличие зависит от
-системы, а не от версии .NET. Спрашивать надо заранее:
+SHA-3 in .NET comes from the operating system's crypto library, so availability depends on the system, not the .NET version. Ask ahead of time:
 
 ```csharp
 if (PdfSignatureAlgorithms.IsSupported(PdfSignatureAlgorithms.Sha3_256))
@@ -72,19 +60,13 @@ if (PdfSignatureAlgorithms.IsSupported(PdfSignatureAlgorithms.Sha3_256))
 }
 ```
 
-`PdfSignatureAlgorithms.Available` перечисляет то, что действительно работает на этой машине. Попытка
-подписать недоступным алгоритмом бросает `PlatformNotSupportedException` в момент подписания и
-перечисляет в сообщении доступные — лучше узнать сразу, чем выпустить подпись, которую никто не
-проверит.
+`PdfSignatureAlgorithms.Available` lists what actually works on this machine. Attempting to sign with an unavailable algorithm throws `PlatformNotSupportedException` at signing time and lists available ones in the message — better to find out immediately than to ship a signature nobody can verify.
 
-Когда используется алгоритм из технической спецификации, в словарь расширений каталога пишется
-объявление по ISO 32000-2 §7.12: читатель, встретивший незнакомую конструкцию, должен иметь
-возможность узнать, какой документ её определяет, а не гадать.
+When an algorithm from a technical specification is used, a declaration per ISO 32000-2 §7.12 is written into the catalog extensions dictionary: a reader that encounters an unfamiliar construct should be able to learn which document defines it, not guess.
 
-## Подпись вместе с кодом целостности
+## Signature Together with Integrity Code
 
-Подпись и код целостности отвечают на разные вопросы: подпись говорит, кто одобрил документ, а код —
-что поставивший его знал пароль. Их можно поставить вместе:
+Signature and integrity code answer different questions: the signature says who approved the document; the code says that whoever placed it knew the password. They can be applied together:
 
 ```csharp
 byte[] signed = PdfSigner.Sign(document, new PdfSignatureOptions
@@ -94,54 +76,35 @@ byte[] signed = PdfSigner.Sign(document, new PdfSignatureOptions
 });
 ```
 
-В подписанной ревизии код не может лежать в трейлере: запись туда изменила бы байты, которые подпись
-покрывает. По ISO/TS 32004 §6.5.2 он прячется среди **неподписанных** атрибутов самой подписи —
-единственной части подписанного контейнера, куда можно писать после подписания. Словарь `AuthCode`
-в трейлере при этом только указывает на подпись через `SigObjRef` и не несёт собственного диапазона
-байтов: его роль играет диапазон подписи.
+In a signed revision the code cannot live in the trailer: writing there would change bytes the signature covers. Per ISO/TS 32004 §6.5.2 it hides among the **unsigned** attributes of the signature itself — the only part of the signed container where writing is allowed after signing. The `AuthCode` dictionary in the trailer only points at the signature via `SigObjRef` and carries no byte range of its own: the signature's range plays that role.
 
-Код записывает два дайджеста — документа и необработанного значения самой подписи, — и проверяющий
-обязан сверить оба. Поэтому MAC обнаруживает замену подписи независимо от того, доверяет ли
-приложение её сертификату и чем закончилась обычная проверка CMS.
+The code records two digests — of the document and of the raw signature value — and the verifier must check both. Therefore the MAC detects signature replacement regardless of whether the application trusts its certificate and how ordinary CMS verification ended.
 
-Документ должен быть зашифрован и уже нести соль, то есть быть сохранён с `AddIntegrityCode`.
-Иначе `PdfSigner.Sign` скажет об этом прямо.
+The document must be encrypted and already carry salt, i.e. saved with `AddIntegrityCode`. Otherwise `PdfSigner.Sign` says so directly.
 
-### Кривые Эдвардса
+### Edwards Curves
 
-ISO/TS 32002 задаёт пары «кривая — дайджест» таблицей, а не оставляет их на выбор подписанту:
+ISO/TS 32002 defines curve–digest pairs in a table rather than leaving them to the signer's choice:
 
-| Кривая | Допустимые дайджесты |
+| Curve | Allowed digests |
 | --- | --- |
 | P-256 | SHA-256, SHA3-256 |
 | P-384 | SHA-384, SHA3-384 |
 | P-521 | SHA-512, SHA3-512 |
-| brainpoolP256r1 | SHA-256/384/512 и соответствующие SHA-3 |
-| brainpoolP384r1 | SHA-384/512 и соответствующие SHA-3 |
+| brainpoolP256r1 | SHA-256/384/512 and matching SHA-3 |
+| brainpoolP384r1 | SHA-384/512 and matching SHA-3 |
 | brainpoolP512r1 | SHA-512, SHA3-512 |
-| Ed25519 / Ed448 | SHA-512 / SHAKE256 соответственно |
+| Ed25519 / Ed448 | SHA-512 / SHAKE256 respectively |
 
-`PdfSignatureAlgorithms.AllowedDigestsForCurve` возвращает эту строку таблицы, а `PdfSigner.Sign`
-отвергает несовпадающий дайджест и неизвестные либо явно параметризованные EC-кривые до подписания.
-Для Brainpool и Edwards в каталог добавляется декларация ISO/TS 32002; NIST P-кривые уже определены
-основным ISO 32000-2.
+`PdfSignatureAlgorithms.AllowedDigestsForCurve` returns that table row, and `PdfSigner.Sign` rejects a mismatched digest and unknown or explicitly parameterized EC curves before signing. For Brainpool and Edwards curves, an ISO/TS 32002 declaration is added to the catalog; NIST P-curves are already defined by base ISO 32000-2.
 
-Подписать ими можно только через `IExternalSigner` — в .NET нет примитива закрытого ключа Ed25519 или
-Ed448, — и по RFC 8419 подпись идёт по всему DER-кодированию подписанных атрибутов, а не по их
-дайджесту; для этого у интерфейса есть `SignMessage`, который по умолчанию просто хеширует и зовёт
-`SignHash`, а Edwards-подписчик переопределяет. Сертификат с таким ключом, переданный напрямую как
-`Certificate`, вызовет `PlatformNotSupportedException` с указанием на внешний подписчик.
+Signing with them is only possible via `IExternalSigner` — .NET has no Ed25519 or Ed448 private-key primitive — and per RFC 8419 the signature covers the full DER-encoded signed attributes, not their digest; the interface provides `SignMessage`, which by default simply hashes and calls `SignHash`, while an Edwards signer overrides it. A certificate with such a key passed directly as `Certificate` throws `PlatformNotSupportedException` pointing to an external signer.
 
-**Проверка же кривых Эдвардса встроена.** Платформенный `SignedCms` их не умеет, поэтому Ed25519 и
-Ed448 считаются собственной арифметикой на `BigInteger` (`EdwardsCurve`, сверено с векторами RFC 8032
-§7). Проверяющему ничего не нужно, кроме сертификата в подписи; Ed448 требует SHAKE256 от системы и
-без неё честно сообщает, что проверить не может.
+**Edwards curve verification is built in.** Platform `SignedCms` does not support them, so Ed25519 and Ed448 are computed with custom arithmetic on `BigInteger` (`EdwardsCurve`, verified against RFC 8032 §7 vectors). The verifier needs nothing beyond the certificate in the signature; Ed448 requires SHAKE256 from the system and honestly reports when it cannot verify without it.
 
-## Метка времени документа и долгосрочная проверка
+## Document Timestamp and Long-Term Validation
 
-Отдельная подпись-метка времени документа (`DocTimeStamp`, ISO 32000-2 §12.8.5) покрывает весь файл и
-доказывает, что он существовал в этом виде на момент, за который ручается служба, — без чьего-либо
-сертификата.
+A separate document timestamp signature (`DocTimeStamp`, ISO 32000-2 §12.8.5) covers the entire file and proves it existed in this form at a moment the service vouches for — without anyone's certificate.
 
 ```csharp
 byte[] stamped = PdfTimestamper.Timestamp(signed, new PdfTimestampOptions
@@ -150,10 +113,10 @@ byte[] stamped = PdfTimestamper.Timestamp(signed, new PdfTimestampOptions
 });
 ```
 
-Вместе с хранилищем данных проверки это лестница уровней PAdES:
+Together with a validation data store, this is the PAdES level ladder:
 
 ```csharp
-// B-T: подпись с меткой времени подписи
+// B-T: signature with signature timestamp
 byte[] signed = PdfSigner.Sign(document, new PdfSignatureOptions
 {
     Certificate = certificate,
@@ -161,42 +124,35 @@ byte[] signed = PdfSigner.Sign(document, new PdfSignatureOptions
     TimestampAuthority = tsa,
 });
 
-// B-LT: положить сертификаты и ответы об отзыве в Document Security Store (§12.8.4)
+// B-LT: put certificates and revocation responses in Document Security Store (§12.8.4)
 var data = new PdfValidationData();
 data.Certificates.Add(certificate);
 data.OcspResponses.Add(ocspResponse);
 byte[] withLtv = PdfLongTermValidation.Add(signed, "Signature1", data);
 
-// B-LTA: запечатать всё это меткой времени документа
+// B-LTA: seal all of that with a document timestamp
 byte[] archived = PdfTimestamper.Timestamp(withLtv, new PdfTimestampOptions { Authority = tsa });
 ```
 
-Библиотека сама ничего не качает: какие OCSP/CRL получить и кому доверять — политика приложения, а не
-формата. Она принимает готовые блобы и раскладывает их в `/DSS` инкрементальным обновлением строго
-после подписи, которую они обслуживают (иначе сдвинулись бы покрытые ею байты); при желании пишет и
-запись `/VRI`, ключ которой — SHA-1 значения `/Contents` подписи, как требует таблица 261.
+The library does not fetch anything itself: which OCSP/CRL to obtain and whom to trust is application policy, not format policy. It accepts ready blobs and places them in `/DSS` via incremental update strictly after the signature they serve (otherwise the bytes it covers would shift); optionally it also writes a `/VRI` entry keyed by the SHA-1 of the signature's `/Contents`, as Table 261 requires.
 
-Эти API собирают структуру B-LT/B-LTA, но сами по себе не являются утверждением о соответствии:
-приложение обязано до добавления проверить цепочку, сроки действия и статус отзыва переданных данных.
+These APIs assemble B-LT/B-LTA structure but are not by themselves a conformance claim: the application must verify chain, validity periods, and revocation status of supplied data before adding it.
 
-Служба времени по умолчанию — HTTP-запрос по `Uri`; за прокси или в тесте её заменяет
-`ITimestampAuthority`.
+The default timestamp service is an HTTP request to a `Uri`; behind a proxy or in tests it is replaced by `ITimestampAuthority`.
 
-## Сертификационная подпись и блокировка полей
+## Certification Signature and Field Locking
 
-Подпись автора (`DocMDP`, §12.8.2.2) объявляет, что документу дальше позволено меняться. Такая в
-документе одна: вторая молча свергла бы первого автора, поэтому библиотека её отвергает.
+An author signature (`DocMDP`, §12.8.2.2) declares what further changes the document may receive. There is only one in a document: a second would silently dethrone the first author, so the library rejects it.
 
 ```csharp
 byte[] certified = PdfSigner.Sign(document, new PdfSignatureOptions
 {
     Certificate = author,
-    CertificationLevel = PdfCertificationLevel.FormFilling,   // заполнять формы можно, править — нет
+    CertificationLevel = PdfCertificationLevel.FormFilling,   // forms may be filled, content may not be edited
 });
 ```
 
-Отдельная подпись может заморозить набор полей формы (`FieldMDP`, §12.8.2.4): их значения становятся
-частью того, за что она ручается.
+A separate signature can freeze a set of form fields (`FieldMDP`, §12.8.2.4): their values become part of what it vouches for.
 
 ```csharp
 byte[] signed = PdfSigner.Sign(document, new PdfSignatureOptions
@@ -206,27 +162,20 @@ byte[] signed = PdfSigner.Sign(document, new PdfSignatureOptions
 });
 ```
 
-Набор пишется дважды, как велит стандарт: в словарь `/Lock` поля и, скопированным, в параметры
-преобразования `FieldMDP` самой подписи — потому что все значения подписи с диапазоном байтов обязаны
-быть прямыми объектами и сослаться на `/Lock` косвенно нельзя.
+The set is written twice, as the standard requires: in the field's `/Lock` dictionary and is duplicated in the signature's `FieldMDP` transform parameters — because all byte-range signature values must be direct objects and cannot refer to `/Lock` indirectly.
 
-## Подпись зашифрованного документа
+## Signing an Encrypted Document
 
 ```csharp
 using PdfDocument document = PdfDocument.Load("secret.pdf", new PdfReadOptions { Password = "open" });
 byte[] signed = PdfSigner.Sign(document, new PdfSignatureOptions { Certificate = certificate });
 ```
 
-Значение `/Contents` — единственная строка в файле, которую шифровать нельзя (§7.6.2): она покрыта
-диапазоном байтов, а не ключом документа, и проверяющий должен прочитать её, не зная пароля. Поэтому
-и запись, и чтение делают для неё исключение; без него подпись не то что не сходится — она не
-разбирается как ASN.1.
+The `/Contents` value is the only string in the file that must not be encrypted (§7.6.2): it is covered by the byte range, not the document key, and the verifier must read it without knowing the password. Therefore both writing and reading make an exception for it; without that the signature not only fails to verify — it does not parse as ASN.1.
 
-Проверять такой файл нужно через перегрузку, которой отдают уже открытый документ:
-`PdfSignatureVerifier.Verify(document, bytes)`. Перегрузка от одних байтов открывает файл сама и
-пароля не знает.
+Such a file must be verified via the overload that takes an already opened document: `PdfSignatureVerifier.Verify(document, bytes)`. The bytes-only overload opens the file itself and knows no password.
 
-## Видимая подпись
+## Visible Signature
 
 ```csharp
 var options = new PdfSignatureOptions
@@ -234,14 +183,13 @@ var options = new PdfSignatureOptions
     Certificate = certificate,
     Appearance = PdfRectangle.FromSize(60, 60, 220, 70),
     PageIndex = 0,
-    Reason = "Проверено",
+    Reason = "Verified",
 };
 ```
 
-Библиотека рисует рамку, имя из сертификата, время и причину. Нужен свой вид — постройте XObject
-через `ContentCanvas.ForStream` и положите его в `/AP` виджета.
+The library draws a frame, the name from the certificate, time, and reason. For a custom look, build an XObject via `ContentCanvas.ForStream` and place it in the widget's `/AP`.
 
-## Метка времени
+## Signature Timestamp
 
 ```csharp
 var options = new PdfSignatureOptions
@@ -252,12 +200,11 @@ var options = new PdfSignatureOptions
 };
 ```
 
-Запрос RFC 3161 строится из `SignerInfo`, ответ проверяется и добавляется неподписанным атрибутом.
-Это уровень PAdES B-T.
+The RFC 3161 request is built from `SignerInfo`, the response is verified and added as an unsigned attribute. This is PAdES B-T level.
 
-## Внешние ключи
+## External Keys
 
-Ключ, который нельзя выгрузить, — обычное дело для HSM и облачных сервисов подписи:
+A key that cannot be exported is normal for HSMs and cloud signing services:
 
 ```csharp
 public sealed class HsmSigner : IExternalSigner
@@ -272,39 +219,26 @@ public sealed class HsmSigner : IExternalSigner
 byte[] signed = PdfSigner.Sign(document, new PdfSignatureOptions { ExternalSigner = new HsmSigner() });
 ```
 
-Для внешнего ключа структура CMS кодируется самой библиотекой (`DetachedCms`): платформенный
-`SignedCms` требует ключ, который он сможет выгрузить, а этого HSM не сделает никогда. Наружу
-уходит только дайджест.
+For an external key the CMS structure is encoded by the library itself (`DetachedCms`): platform `SignedCms` requires a key it can export, which an HSM will never do. Only the digest leaves the boundary.
 
-## Проверка
+## Verification
 
 ```csharp
 foreach (PdfSignatureInfo signature in PdfSignatureVerifier.VerifyFile("contract-signed.pdf"))
 {
     Console.WriteLine($"{signature.FieldName}: " +
-                      $"целостна={signature.IsIntact}, " +
-                      $"покрывает весь файл={signature.CoversWholeDocument}, " +
-                      $"кем={signature.SignerCertificate?.Subject}");
+                      $"intact={signature.IsIntact}, " +
+                      $"covers whole file={signature.CoversWholeDocument}, " +
+                      $"by={signature.SignerCertificate?.Subject}");
 }
 ```
 
-Проверка отвечает на два вопроса по отдельности: не изменились ли покрытые байты и покрывают ли они
-файл целиком. Криптографически безупречная подпись первой половины файла не стоит ничего, и
-объединять эти ответы в один флаг значило бы это скрывать.
+Verification answers two questions separately: whether the covered bytes changed and whether they cover the entire file. A cryptographically perfect signature over the first half of a file is worth nothing, and merging these answers into one flag would hide that.
 
-`ByteRange` сначала проверяется структурно: чётное число пар, границы внутри файла, строгий порядок
-без перекрытий. `CoversWholeDocument` становится истинным только для двух участков от байта ноль до
-точного конца файла, когда единственный разрыв совпадает ровно со строковым значением `/Contents`;
-произвольные четыре байта после диапазона больше не считаются допустимым пробелом.
+`ByteRange` is checked structurally first: an even number of pairs, bounds inside the file, strict order without overlap. `CoversWholeDocument` becomes true only for two segments from byte zero to the exact end of the file, when the only gap matches exactly the string value of `/Contents`; arbitrary four bytes after the range no longer count as an acceptable gap.
 
-Когда документ подписан дважды, первая подпись честно сообщает, что весь файл она уже не покрывает,
-и при этом остаётся целой.
+When a document is signed twice, the first signature honestly reports that it no longer covers the whole file, and remains intact.
 
-`PdfSignatureInfo` различает и метки времени документа (`IsDocumentTimestamp`), и сертификационные
-подписи (`CertificationLevel`). Встроенная метка времени подписи проверяется по-настоящему —
-`TimestampIntact` говорит, сошёлся ли токен RFC 3161 и его собственная подпись, а не только удалось ли
-его разобрать.
+`PdfSignatureInfo` distinguishes document timestamps (`IsDocumentTimestamp`) from certification signatures (`CertificationLevel`). Embedded signature timestamp is verified for real — `TimestampIntact` says whether the RFC 3161 token and its own signature matched, not merely whether it parsed.
 
-Доверие к цепочке библиотека не проверяет: какие корни считать доверенными — вопрос политики
-приложения, а не формата. `CertificationLevel` сообщает объявленное значение DocMDP; verifier пока
-не классифицирует объекты последующих revisions и не решает, разрешены ли их изменения этим уровнем.
+The library does not verify trust in the chain: which roots to trust is application policy, not format policy. `CertificationLevel` reports the declared DocMDP value; the verifier does not yet classify objects in later revisions or decide whether their changes are allowed by that level.

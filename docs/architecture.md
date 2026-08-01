@@ -1,189 +1,184 @@
-# Архитектура Inkwright
+# Inkwright Architecture
 
-Inkwright — библиотека для PDF на .NET 10, спроектированная по образцу слоёв `System.Text.Json`:
-низкоуровневые примитивы, поверх них потоковый ввод-вывод, поверх — документная модель, поверх —
-надстройки, за которые платит только тот, кому они нужны. Каждый слой публичен и самодостаточен.
+Inkwright is a PDF library for .NET 10, designed along the layered model of `System.Text.Json`:
+low-level primitives, streaming I/O on top of them, a document model above that, and add-ons on top
+that only users who need them pay for. Each layer is public and self-contained.
 
-## Слои
+## Layers
 
 ```
-L3  Inkwright.Layout    компоновщик: Measure/Draw, текстовый layout, таблицы, теги, PDF/A
-    Inkwright.Forms     AcroForm: поля, appearance, flatten, [PdfForm] + source generator
-    Inkwright.Signing   подписи: CMS/PAdES, RFC 3161, верификация — только BCL
-    Inkwright.Cjk       168 предопределённых CMap таблицы 116 в двоичном виде
-L2  DOM                 PdfDocument / PdfPage / ContentCanvas / шрифты / извлечение текста
-                        цвет, функции, декодирование картинок, слияние, структурное дерево
-L1  IO                  PdfReader (ленивый, recovery) / PdfWriter (forward-only) / append-обновления
-L0  COS + фильтры       PdfValue, PdfName, лексер, Flate/LZW/A85/AHx/RL/Brotli, предикторы, шифрование
+L3  Inkwright.Layout    layout engine: Measure/Draw, text layout, tables, tags, PDF/A
+    Inkwright.Forms     AcroForm: fields, appearance, flatten, [PdfForm] + source generator
+    Inkwright.Signing   signatures: CMS/PAdES, RFC 3161, verification — BCL only
+    Inkwright.Cjk       168 predefined CMap tables from ISO 32000-2 Table 116, in binary form
+L2  DOM                 PdfDocument / PdfPage / ContentCanvas / fonts / text extraction
+                        color, functions, image decoding, merging, structure tree
+L1  IO                  PdfReader (lazy, recovery) / PdfWriter (forward-only) / append updates
+L0  COS + filters       PdfValue, PdfName, lexer, Flate/LZW/A85/AHx/RL/Brotli, predictors, encryption
 ```
 
-`Inkwright.Layout`, `Inkwright.Forms`, `Inkwright.Signing` и `Inkwright.Cjk` — надстройки над L2.
-Ядро не ссылается ни на одну из них, поэтому тот, кому нужны только чтение и запись, не платит за
-движок компоновки, за генератор appearance-потоков, за криптографию и за мегабайт таблиц CJK ничем.
+`Inkwright.Layout`, `Inkwright.Forms`, `Inkwright.Signing`, and `Inkwright.Cjk` are add-ons on top of L2.
+The core does not reference any of them, so someone who only needs reading and writing pays nothing
+for the layout engine, appearance-stream generation, cryptography, or megabytes of CJK tables.
 
-`Inkwright.Cjk` подключается через `CMapProvider`: ядро спрашивает у зарегистрированного источника
-предопределённые CMap и обходится двухбайтовой identity, когда источника нет. Регистрация явная —
-`CjkCMaps.Register()`, — потому что молчаливая подмена поведения от одной только ссылки на пакет
-хуже одной строки в старте приложения.
+`Inkwright.Cjk` is wired through `CMapProvider`: the core asks a registered source for predefined
+CMaps and falls back to two-byte identity when no source is present. Registration is explicit —
+`CjkCMaps.Register()` — because silently changing behavior from a package reference alone is worse
+than one line at application startup.
 
-## L0: объекты COS
+## L0: COS Objects
 
-`PdfValue` — 24-байтный tagged union: `object?` для ссылочных типов, `long` для чисел и ссылок,
-однобайтовый тег. Числа, булевы значения, `null` и косвенные ссылки не аллоцируют вовсе.
-`default(PdfValue)` — это объект `null`, как и требует §7.3.9.
+`PdfValue` is a 24-byte tagged union: `object?` for reference types, `long` for numbers and references,
+a single-byte tag. Numbers, booleans, `null`, and indirect references allocate nothing at all.
+`default(PdfValue)` is a `null` object, as §7.3.9 requires.
 
-`PdfName` сравнивается по значению и интернируется: ~700 имён из спецификации лежат в
-`FrozenDictionary` и достаются по `ReadOnlySpan<char>` через alternate lookup, остальные
-аллоцируются один раз на документ.
+`PdfName` is compared by value and interned: ~700 names from the specification live in a
+`FrozenDictionary` and are retrieved by `ReadOnlySpan<char>` via alternate lookup; the rest are
+allocated once per document.
 
-`PdfDictionary` хранит ключи и значения в двух параллельных массивах и ищет линейно, пока записей
-меньше двенадцати, — это подавляющее большинство словарей в реальных файлах. Порядок вставки
-сохраняется, поэтому переписанный файл байт-стабилен.
+`PdfDictionary` stores keys and values in two parallel arrays and searches linearly while there are
+fewer than twelve entries — the overwhelming majority of dictionaries in real files. Insertion order
+is preserved, so a rewritten file is byte-stable.
 
-Лексер — `ref struct` над `ReadOnlySpan<byte>`; классы символов §7.2.2 заданы как
-`SearchValues<byte>`, так что поиск границы токена векторизован. Парсер объектов тотален: любая
-поломка синтаксиса деградирует до объекта `null`, а не до исключения, и ограничитель глубины
-не даёт враждебной вложенности съесть стек.
+The lexer is a `ref struct` over `ReadOnlySpan<byte>`; §7.2.2 character classes are defined as
+`SearchValues<byte>`, so token boundary search is vectorized. The object parser is total: any syntax
+breakdown degrades to a `null` object, not an exception, and a depth limit prevents hostile nesting
+from eating the stack.
 
-### Ключевое решение: резолвер живёт в графе
+### Key Decision: The Resolver Lives in the Graph
 
-Контейнер, прочитанный из файла, помнит, чем разрешать косвенные ссылки. Резолвер распространяется
-вниз при присваивании (`PdfResolverBinder`), поэтому словарь, собранный вручную и положенный в
-словарь из файла, начинает разрешать ссылки сам. Без этого получается класс ошибок, которые ничем
-себя не проявляют: `GetStream(...)` молча возвращает `null`, потому что значение осталось ссылкой.
+A container read from a file remembers how to resolve indirect references. The resolver propagates
+down on assignment (`PdfResolverBinder`), so a dictionary built by hand and placed into a dictionary
+from a file starts resolving references on its own. Without this you get a class of errors that
+never surface: `GetStream(...)` silently returns `null` because the value remained a reference.
 
-## L1: чтение
+## L1: Reading
 
-Файл целиком лежит в памяти как `ReadOnlyMemory<byte>`; объекты разбираются в момент первого
-обращения. Понимаются таблицы xref, xref-потоки, гибридные файлы (`/XRefStm`), объектные потоки и
-цепочки `/Prev`.
+The entire file sits in memory as `ReadOnlyMemory<byte>`; objects are parsed on first access.
+xref tables, xref streams, hybrid files (`/XRefStm`), object streams, and `/Prev` chains are all
+understood.
 
-Восстановление встроено, а не пришито сбоку:
+Recovery is built in, not bolted on:
 
-| Поломка | Что делает читатель |
+| Breakage | What the reader does |
 | --- | --- |
-| Нет или сломан `startxref` | Сканирует файл на `N G obj` и собирает таблицу заново |
-| Объект не там, где сказано | Ищет его сканированием и запоминает настоящее смещение |
-| Смещения от заголовка, а не от начала файла | Пробует сдвиг на позицию `%PDF-` |
-| `/Length` потока не сходится | Ищет `endstream` и берёт фактическую длину |
-| Нет `/Root` | Находит каталог сканированием, включая объектные потоки |
-| Битый Flate-поток | Отдаёт то, что успело распаковаться |
+| Missing or broken `startxref` | Scans the file for `N G obj` and rebuilds the table |
+| Object not where indicated | Finds it by scanning and remembers the real offset |
+| Offsets from header, not file start | Tries a shift to the `%PDF-` position |
+| Stream `/Length` mismatch | Finds `endstream` and takes the actual length |
+| No `/Root` | Finds the catalog by scanning, including object streams |
+| Broken Flate stream | Returns whatever decompressed successfully |
 
-Всё это — `PdfWarning` с кодом в `LoadDiagnostics`. `PdfFormatException` бросается ровно в одном
-случае: в данных нет ни заголовка, ни единого косвенного объекта.
+All of this becomes `PdfWarning` with a code in `LoadDiagnostics`. `PdfFormatException` is thrown in
+exactly one case: the data contains neither a header nor a single indirect object.
 
-Ограничение на расширение потока (`PdfFilterLimits`, по умолчанию 128 МБ) закрывает zip-бомбы:
-несколько килобайт deflate умеют назвать терабайт.
+The stream expansion limit (`PdfFilterLimits`, 128 MB by default) closes zip bombs: a few kilobytes
+of deflate can claim a terabyte.
 
-## L1: запись
+## L1: Writing
 
-`PdfWriter` — forward-only: объект сериализуется в поток сразу, в памяти остаётся только таблица
-смещений. Числа пишутся прямо в UTF-8 через `IUtf8SpanFormattable`, ключевые слова — u8-литералами,
-строки уходят в литеральной форме, пока остаются читаемыми, и в шестнадцатеричной, как только
-перестают.
+`PdfWriter` is forward-only: an object is serialized to the stream immediately; only the offset table
+remains in memory. Numbers are written directly to UTF-8 via `IUtf8SpanFormattable`, keywords as u8
+literals, strings go in literal form while they stay readable and in hexadecimal once they stop.
 
-Мелкие объекты пакуются в объектные потоки, таблица перекрёстных ссылок пишется xref-потоком.
-Инкрементальное сохранение (`SaveIncremental`) дописывает секцию в конец файла и цепляет её к
-предыдущей через `/Prev`; исходные байты не сдвигаются ни на один — иначе ломаются подписи.
+Small objects are packed into object streams; the cross-reference table is written as an xref stream.
+Incremental save (`SaveIncremental`) appends a section to the end of the file and chains it to the
+previous one via `/Prev`; original bytes are not shifted by a single byte — otherwise signatures break.
 
-## L2: документная модель
+## L2: Document Model
 
-`PdfDocument` — модель, а не хэндл: загрузка читает пакет, дальше открытых ручек нет.
+`PdfDocument` is a model, not a handle: loading reads the package; there are no open handles afterward.
 
-**Сохранность непонятого.** Объект, который модель ни разу не разобрала, при перезаписи копируется
-байт в байт вместе с заголовком и `endobj`. Это надёжнее, чем отслеживать «грязные» объекты:
-если никто не парсил объект, никто не мог его изменить.
+**Preservation of the unparsed.** An object the model never parsed is copied byte-for-byte on rewrite,
+including the header and `endobj`. This is more reliable than tracking "dirty" objects: if nobody
+parsed an object, nobody could have changed it.
 
-**Нумерация.** Номера объектов при перезаписи сохраняются. Новые объекты начинаются выше не только
-максимального существующего номера, но и выше `/Size` из трейлера: висячая ссылка внутрь
-зарезервированного диапазона должна остаться висячей, иначе объект, который мы туда положим,
-беззвучно станет тем, на что эта ссылка указывала.
+**Numbering.** Object numbers are preserved on rewrite. New objects start above not only the maximum
+existing number but also above `/Size` from the trailer: a dangling reference into a reserved range
+must stay dangling; otherwise an object we put there silently becomes what that reference pointed to.
 
-**Дерево страниц** разворачивается в плоский список; наследуемые атрибуты (`Resources`, `MediaBox`,
-`CropBox`, `Rotate`) при загрузке проталкиваются вниз в каждую страницу, поэтому словарь страницы
-дальше самодостаточен. Сохранение пишет один узел `/Pages` со всеми `/Kids`.
+**The page tree** is flattened into a flat list; inherited attributes (`Resources`, `MediaBox`,
+`CropBox`, `Rotate`) are pushed down into each page on load, so the page dictionary is self-contained
+afterward. Saving writes a single `/Pages` node with all `/Kids`.
 
-**Контент** разбирается data-oriented: один плоский массив операндов плюс список троек
-`(оператор, смещение, количество)`. На оператор не приходится ни одного объекта, поэтому страница
-с сотней тысяч сегментов пути остаётся дешёвой.
+**Content** is parsed data-oriented: one flat operand array plus a list of triples
+`(operator, offset, count)`. No object is allocated per operator, so a page with a hundred thousand
+path segments stays cheap.
 
-**Аннотации** — типизированный фасад над словарём, а не его замена: всё, что модель знает, лежит в
-том же `/Annots`, а всё, чего не знает, доступно через `annotation.Dictionary` и переживает
-перезапись. Внешний вид библиотека рисует сама, потому что читатели рисуют комментарии по-своему или
-не рисуют вовсе, — но чужой appearance-поток при правке текста не трогает: комментарий не повод
-выбрасывать картинку, которую мы не умеем воспроизвести. Подробности в
-[annotations.md](annotations.md).
+**Annotations** are a typed facade over the dictionary, not a replacement: everything the model knows
+lives in the same `/Annots`, and everything it does not know is available through `annotation.Dictionary`
+and survives rewrite. The library draws appearance itself because viewers render comments their own way
+or not at all — but a foreign appearance stream is not touched when editing text: a comment is no
+reason to discard an image we cannot reproduce. Details in [annotations.md](annotations.md).
 
-## Использованные возможности .NET 10 / C# 14
+## .NET 10 / C# 14 Features Used
 
-| Возможность | Где |
+| Feature | Where |
 | --- | --- |
-| Extension members (C# 14) | Fluent-компоновщик `Container`, стили `TextStyle`, построитель форм |
-| `field` keyword | Ленивые свойства `Fonts`, `Attachments` в `PdfDocument` |
+| Extension members (C# 14) | Fluent layout `Container`, `TextStyle` styles, form builder |
+| `field` keyword | Lazy properties `Fonts`, `Attachments` in `PdfDocument` |
 | `params ReadOnlySpan<T>` | `PdfArray.OfNumbers`, `ContentCanvas.Dash`, `TableDescriptor.Columns` |
-| u8-литералы + `IUtf8SpanFormattable` | `Utf8Writer`, сериализация объектов, лексер |
-| `SearchValues<byte>` | Классы символов §7.2.2, разбор токенов |
-| `FrozenDictionary` + alternate lookup | Интернирование имён, таблица операторов контента |
-| `Vector128` | Разворот PNG-предиктора «Up» |
-| ref struct + `scoped` | Лексер и парсер объектов |
+| u8 literals + `IUtf8SpanFormattable` | `Utf8Writer`, object serialization, lexer |
+| `SearchValues<byte>` | §7.2.2 character classes, token parsing |
+| `FrozenDictionary` + alternate lookup | Name interning, content operator table |
+| `Vector128` | PNG "Up" predictor reversal |
+| ref struct + `scoped` | Lexer and object parser |
 | static abstract members | `IPdfFormSchema<T>` |
 | Incremental source generator | `Inkwright.Forms.Generator` |
-| `AsnWriter` / `SignedCms` / `Rfc3161TimestampRequest` | Подписи целиком на BCL |
-| `IsAotCompatible` | Все четыре рантайм-пакета |
+| `AsnWriter` / `SignedCms` / `Rfc3161TimestampRequest` | Signatures entirely on BCL |
+| `IsAotCompatible` | All four runtime packages |
 
-## На чём основана сверка
+## What Compliance Is Based On
 
 - PDF 1.7 — ISO 32000-1:2008.
-- PDF 2.0 — ISO 32000-2:2020, второе издание, с Errata Collection 3. Раньше сверка шла по черновику
-  ISO/DIS 2017 года; что изменилось и что из этого следует — в [pdf20-audit.md](pdf20-audit.md).
-- PDF/A — ISO 19005-1, -2 и -3 с корригендумами.
+- PDF 2.0 — ISO 32000-2:2020, second edition, with Errata Collection 3. Compliance previously
+  tracked the 2017 ISO/DIS draft; what changed and what follows from it is in [pdf20-audit.md](pdf20-audit.md).
+- PDF/A — ISO 19005-1, -2, and -3 with corrigenda.
 - XFDF — ISO 19444-1:2016.
-- Факсовые кодировки — ITU-T T.4 и T.6; JBIG2 — ITU-T T.88, он же ISO/IEC 14492:2019.
-- Шрифты — Adobe Technical Note #5176 (CFF) и #5177 (Type 2 Charstring).
-- Расширения PDF 2.0 — ISO/TS 32001 (SHA-3), 32002 (кривые Эдвардса), 32003 (AES-GCM),
-  32004 (целостность), 32005 (пространства имён структуры).
-- Объявления соответствия — PDF Association, PDF Declarations; Well-Tagged PDF 1.0.
+- Fax encodings — ITU-T T.4 and T.6; JBIG2 — ITU-T T.88, also ISO/IEC 14492:2019.
+- Fonts — Adobe Technical Note #5176 (CFF) and #5177 (Type 2 Charstring).
+- PDF 2.0 extensions — ISO/TS 32001 (SHA-3), 32002 (Edwards curves), 32003 (AES-GCM),
+  32004 (integrity), 32005 (structure namespaces).
+- Conformance declarations — PDF Association, PDF Declarations; Well-Tagged PDF 1.0.
 
-## Осознанные ограничения
+## Deliberate Limitations
 
-- Нет растеризации: библиотека пишет и читает PDF, но не превращает его в картинку. Отдельные
-  картинки декодируются в пиксели (см. [images.md](images.md)), но страница целиком — нет.
-- Шейпинг арабского и индийских письменностей — через внешний движок; встроенный layout умеет
-  переносы, кернинг из метрик и выключку, но не переупорядочивание глифов. Двунаправленный
-  *порядок* при извлечении текста восстанавливается, а вот соединение форм арабских букв при
-  рисовании — нет.
-- JPX (JPEG 2000) и прогрессивный JPEG не декодируются: картинки в этих кодеках проходят насквозь
-  при правке и отдаются как есть при извлечении. Отказ явный, а не тихо неверный результат.
-- JBIG2 декодируется целиком, кроме двух редкостей: словарей, переиспользующих контекст кодирования
-  соседнего сегмента, и расширенных шаблонов с двенадцатью адаптивными пикселями.
-- Кубическая интерполяция табличных функций (`/Order 3`) сделана тензорным произведением сплайнов
-  Катмулла–Рома по всем осям входа. Если хотя бы одна ось содержит меньше четырёх отсчётов,
-  `/Order 3` игнорируется, как требует §7.10.2.
-- Шейдинги читаются как объекты, но не вычисляются в пиксели; функции, на которых они построены,
-  вычисляются полностью.
-- Сабсеттинг CFF выбрасывает очертания неиспользованных глифов и недостижимые подпрограммы, сохраняя
-  нумерацию тех и других — в том числе локальные подпрограммы каждого словаря шрифтов CID-keyed:
-  FDSelect сопоставляет глиф словарю, и подпрограммы каждого словаря обрезаются по нуждам его глифов.
-- Шифрование читается для RC4, AES-128, AES-256 и AES-GCM; пишется AES-256 в режиме сцепления блоков
-  (ревизия 6) или в режиме Галуа со счётчиком (ревизия 7, ISO/TS 32003). Сертификатное шифрование
-  (§7.6.5, `EnvelopedCms`) читается и пишется — 256-битный AES с крипто-фильтрами. Читатель различает
-  `/StmF`, `/StrF`, `/EFF` и явный потоковый `/Crypt /Name`; `/Identity` не прогоняется через
-  шифр документа.
-- Подписи: SHA-2 всегда, SHA-3 и SHAKE256 (ISO/TS 32001) — если их даёт криптобиблиотека системы.
-  Кривые Эдвардса (ISO/TS 32002) подписываются только через внешний подписчик (в .NET нет примитива
-  закрытого ключа Ed25519/Ed448), но проверяются встроенной арифметикой. Есть строительные блоки
-  PAdES B-LTA: метка времени документа (§12.8.5), хранилище данных проверки (§12.8.4), сертификационные
-  подписи DocMDP и блокировка полей FieldMDP (§12.8.2). OCSP/CRL библиотека не качает — принимает
-  готовые, предварительно проверенные приложением блобы, потому что политика доверия не дело формата.
-  Verifier проверяет криптографическую целостность и TSA-токены, но не доверие цепочки и не
-  допустимость последующих изменений по DocMDP.
-- Защита целостности (ISO/TS 32004) читается, проверяется и пишется — отдельным токеном в трейлере
-  или атрибутом подписи. Соль выводится один раз при шифровании и не может быть добавлена позже.
-- JBIG2 декодируется целиком, кроме словарей, переиспользующих контекст соседнего сегмента, и трёх
-  краевых способов уточняюще-агрегатного кодирования символов (SDREFAGG с уточнением, в том числе по
-  Хаффману). Это синтетические конформанс-файлы, кодирующие одну тестовую картинку экзотически; они
-  честно отвергаются исключением, а не декодируются неверно.
-- Линеаризация читается, но не пишется.
-- PDF/A и PDF/UA проверяются по тому, что можно проверить из файла. Всё, что требует человеческого
-  суждения — уместность тега, порядок чтения, осмысленность альтернативного текста, — не проверяется
-  и не может быть. Полную проверку PDF/A делает veraPDF; см. [accessibility.md](accessibility.md).
+- No rasterization: the library reads and writes PDF but does not turn it into an image. Individual
+  images decode to pixels (see [images.md](images.md)), but a full page does not.
+- Arabic and Indic script shaping goes through an external engine; built-in layout handles wrapping,
+  metric kerning, and justification, but not glyph reordering. Bidirectional *order* is restored on
+  text extraction, but Arabic letter form joining on drawing is not.
+- JPX (JPEG 2000) and progressive JPEG are not decoded: images in those codecs pass through on edit
+  and are returned as-is on extraction. Failure is explicit, not a silently wrong result.
+- Cubic interpolation of sampled functions (`/Order 3`) is implemented as a tensor product of
+  Catmull–Rom splines across all input axes. If any axis has fewer than four samples, `/Order 3` is
+  ignored, as §7.10.2 requires.
+- Shadings are read as objects but not evaluated to pixels; the functions they are built on are
+  evaluated fully.
+- CFF subsetting drops outlines of unused glyphs and unreachable subroutines while preserving the
+  numbering of both — including local subroutines of each CID-keyed font dictionary: FDSelect maps a
+  glyph to a dictionary, and each dictionary's subroutines are trimmed to what its glyphs need.
+- Encryption is read for RC4, AES-128, AES-256, and AES-GCM; it is written as AES-256 in cipher block
+  chaining mode (revision 6) or Galois counter mode (revision 7, ISO/TS 32003). Certificate encryption
+  (§7.6.5, `EnvelopedCms`) is read and written — 256-bit AES with crypt filters. The reader
+  distinguishes `/StmF`, `/StrF`, `/EFF`, and explicit stream `/Crypt /Name`; `/Identity` is not run
+  through document encryption.
+- Signatures: SHA-2 always; SHA-3 and SHAKE256 (ISO/TS 32001) when the system crypto library provides
+  them. Edwards curves (ISO/TS 32002) are signed only through an external signer (there is no Ed25519/Ed448
+  private-key primitive in .NET), but are verified with built-in arithmetic. PAdES B-LTA building blocks
+  are present: document timestamp (§12.8.5), validation data storage (§12.8.4), DocMDP certification
+  signatures and FieldMDP field lock (§12.8.2). The library does not fetch OCSP/CRL — it accepts
+  ready-made blobs pre-validated by the application, because trust policy is not the format's job.
+  The verifier checks cryptographic integrity and TSA tokens, but not chain trust or whether subsequent
+  changes are allowed under DocMDP.
+- Integrity protection (ISO/TS 32004) is read, verified, and written — as a separate token in the
+  trailer or a signature attribute. Salt is derived once at encryption and cannot be added later.
+- JBIG2 is fully decoded except for dictionaries that reuse a neighboring segment's encoding
+  context, extended templates with twelve adaptive pixels, and three edge cases of symbol
+  refinement-aggregate encoding (SDREFAGG with refinement, including Huffman). These are synthetic
+  conformance files that encode one test image exotically; they are honestly rejected with an
+  exception rather than decoded incorrectly.
+- Linearization is read but not written.
+- PDF/A and PDF/UA are checked for what can be checked from the file. Everything that requires human
+  judgment — tag appropriateness, reading order, meaningful alternative text — is not checked and
+  cannot be. Full PDF/A validation is done by veraPDF; see [accessibility.md](accessibility.md).

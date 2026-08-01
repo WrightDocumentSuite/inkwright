@@ -1,15 +1,15 @@
-# Быстрый старт
+# Quick Start
 
-Требуется .NET 10 SDK.
+Requires .NET 10 SDK.
 
 ```bash
-dotnet add package Inkwright            # ядро: чтение, запись, правка, извлечение текста
-dotnet add package Inkwright.Layout     # компоновщик отчётов, теги, PDF/A
-dotnet add package Inkwright.Forms      # интерактивные формы
-dotnet add package Inkwright.Signing    # подписи
+dotnet add package Inkwright            # core: read, write, edit, text extraction
+dotnet add package Inkwright.Layout     # report layout engine, tags, PDF/A
+dotnet add package Inkwright.Forms      # interactive forms
+dotnet add package Inkwright.Signing    # signatures
 ```
 
-## Собрать документ
+## Build a Document
 
 ```csharp
 using Inkwright;
@@ -20,16 +20,16 @@ PdfPage page = document.Pages.Add(PageSize.A4);
 
 using (ContentCanvas canvas = ContentCanvas.ForPage(page))
 {
-    canvas.DrawText("Привет", 72, 700, document.Fonts.Helvetica, 24, PdfColor.Black);
+    canvas.DrawText("Hello", 72, 700, document.Fonts.Helvetica, 24, PdfColor.Black);
     canvas.FillColor(PdfColor.Parse("#2278D4")).Rectangle(72, 600, 200, 60).Fill();
     canvas.Commit();
 }
 
-document.Info.Title = "Первый файл";
+document.Info.Title = "First file";
 document.Save("hello.pdf");
 ```
 
-## Отчёт, который сам растекается по страницам
+## A Report That Flows Across Pages on Its Own
 
 ```csharp
 using Inkwright.Layout;
@@ -39,30 +39,30 @@ Report.Create()
     {
         page.Size(PageSize.A4);
         page.Margin(45);
-        page.Header().Text("Отчёт за квартал", TextStyle.Default.FontSize(18).Bold());
+        page.Header().Text("Quarterly Report", TextStyle.Default.FontSize(18).Bold());
         page.Content().Column(column =>
         {
             column.Spacing(10);
-            column.Item().Text("Выручка держится на уровне прошлого квартала.");
+            column.Item().Text("Revenue is holding at last quarter's level.");
             column.Item().Table(table =>
             {
                 table.Columns(ColumnWidth.Fraction(3), ColumnWidth.Fraction(1));
                 table.Grid();
-                table.Header().Text("Статья").Text("Сумма");
-                table.Row().Text("Услуги").Text("29 620");
+                table.Header().Text("Item").Text("Amount");
+                table.Row().Text("Services").Text("29 620");
             });
         });
-        page.Footer().AlignCenter().Text(text => text.PageNumbers("{0} из {1}"));
+        page.Footer().AlignCenter().Text(text => text.PageNumbers("{0} of {1}"));
     })
     .Save("report.pdf");
 ```
 
-## Прочитать чужой файл
+## Read Someone Else's File
 
 ```csharp
 using PdfDocument document = PdfDocument.Load("input.pdf");
 
-Console.WriteLine($"{document.Pages.Count} страниц, версия {document.Version}");
+Console.WriteLine($"{document.Pages.Count} pages, version {document.Version}");
 
 foreach (PdfWarning warning in document.Diagnostics)
     Console.WriteLine($"  {warning}");
@@ -70,10 +70,10 @@ foreach (PdfWarning warning in document.Diagnostics)
 string text = document.Pages[0].ExtractText();
 ```
 
-Файл с испорченной таблицей перекрёстных ссылок откроется так же: читатель найдёт объекты
-сканированием и запишет в `Diagnostics`, что именно пришлось чинить.
+A file with a corrupted cross-reference table opens the same way: the reader finds objects by
+scanning and records in `document.Diagnostics` exactly what had to be repaired.
 
-## Поправить и дописать
+## Edit and Append
 
 ```csharp
 using PdfDocument document = PdfDocument.Load("invoice.pdf");
@@ -83,15 +83,15 @@ using (ContentCanvas canvas = ContentCanvas.ForPage(document.Pages[0]))
     canvas.Save()
           .Opacity(0.15)
           .Transform(PdfMatrix.Rotation(38) * PdfMatrix.Translation(140, 240))
-          .DrawText("ОПЛАЧЕНО", 0, 0, document.Fonts.HelveticaBold, 72, PdfColor.Parse("#1B7F3B"))
+          .DrawText("PAID", 0, 0, document.Fonts.HelveticaBold, 72, PdfColor.Parse("#1B7F3B"))
           .Restore();
     canvas.Commit();
 }
 
-document.SaveIncremental("invoice-paid.pdf");   // исходные байты не тронуты
+document.SaveIncremental("invoice-paid.pdf");   // original bytes untouched
 ```
 
-## Прокомментировать
+## Annotate
 
 ```csharp
 using Inkwright.Annotations;
@@ -99,28 +99,28 @@ using Inkwright.Annotations;
 using PdfDocument document = PdfDocument.Load("contract.pdf");
 PdfPage page = document.Pages[0];
 
-page.Annotations.MarkText("сроки поставки", PdfAnnotationType.Highlight, author: "Прия");
+page.Annotations.MarkText("delivery dates", PdfAnnotationType.Highlight, author: "Priya");
 
 PdfTextAnnotation note = page.Annotations.AddNote(
-    new PdfPoint(505, 700), "Ставка не изменилась?", "Прия", PdfNoteIcon.Help);
+    new PdfPoint(505, 700), "Rate unchanged?", "Priya", PdfNoteIcon.Help);
 
-note.Reply("Нет, прежняя", "Том");
-note.SetReviewState(PdfReviewState.Completed, "Прия");
+note.Reply("No, same as before", "Tom");
+note.SetReviewState(PdfReviewState.Completed, "Priya");
 
 document.SaveIncremental("reviewed.pdf");
 ```
 
-Каждый комментарий получает готовый appearance-поток, поэтому выглядит одинаково во всех
-просмотрщиках. Удаление каскадное: `note.Delete()` уносит popup-окно и всю ветку ответов.
+Every annotation gets a ready-made appearance stream, so it looks the same in all viewers.
+Deletion is cascading: `note.Delete()` removes the popup and the entire reply thread.
 
-## Что дальше
+## What's Next
 
-- [Архитектура](architecture.md) — из чего библиотека сложена и почему
-- [Чтение и правка](reading.md) — диагностика, восстановление, шифрование
-- [Компоновка](layout.md) — Measure/Draw, таблицы, колонтитулы, разрывы
-- [Текст и шрифты](text.md) — встраивание, сабсеттинг, извлечение с позициями
-- [Комментарии и аннотации](annotations.md) — заметки, выделения, ветки ответов, статусы
-- [Формы](forms.md) — заполнение, appearance, flatten, типизированный маппинг
-- [Подписи](signing.md) — PAdES, метки времени, внешние ключи
-- [Архивные документы](archival.md) — теги, PDF/A, Factur-X
-- [Бенчмарки](benchmarks.md)
+- [Architecture](architecture.md) — what the library is made of and why
+- [Reading and Editing](reading.md) — diagnostics, recovery, encryption
+- [Layout](layout.md) — Measure/Draw, tables, headers and footers, page breaks
+- [Text and Fonts](text.md) — embedding, subsetting, extraction with positions
+- [Comments and Annotations](annotations.md) — notes, highlights, reply threads, statuses
+- [Forms](forms.md) — filling, appearance, flatten, typed mapping
+- [Signing](signing.md) — PAdES, timestamps, external keys
+- [Archival Documents](archival.md) — tags, PDF/A, Factur-X
+- [Benchmarks](benchmarks.md)

@@ -1,143 +1,121 @@
-# Матрица соответствия ISO 19005-4 (PDF/A-4)
+# ISO 19005-4 (PDF/A-4) Conformance Matrix
 
-Построчная сверка библиотеки с ISO 19005-4:2020 — первой частью PDF/A, написанной против PDF 2.0.
-Источник — полный текст в `E:\Docs\ISO_19005-4_2020`, плюс утверждённые ISO errata из
-`E:\Docs\PDF\pdf-issues-main/docs/19005-4-2020`.
+Line-by-line verification of the library against ISO 19005-4:2020 — the first PDF/A part written against PDF 2.0. Source: full text in `E:\Docs\ISO_19005-4_2020`, plus approved ISO errata from `E:\Docs\PDF\pdf-issues-main/docs/19005-4-2020`.
 
-Части 1–3 живут в отдельной [матрице](pdfa-matrix.md): они несовместимы с частью 4 по построению —
-те требуют заголовок `%PDF-1.n`, эта требует `%PDF-2.n`.
+Parts 1–3 live in a separate [matrix](pdfa-matrix.md): they are incompatible with Part 4 in construction — those require a `%PDF-1.n` header; this requires `%PDF-2.n`.
 
-## Чем часть 4 отличается от предыдущих
+## How Part 4 differs from earlier parts
 
-Не «ещё один уровень», а другая конструкция:
+Not "another level", but a different construction:
 
-- **Уровней A, U и B больше нет.** Есть базовый PDF/A-4 и два расширения: **PDF/A-4e** (Annex B,
-  трёхмерная графика) и **PDF/A-4f** (Annex A, вложенные файлы любого типа). Они не градуируют
-  строгость, а добавляют разрешения.
-- **Дерево структуры не требуется ни на одном уровне.** §6.8 лишь рекомендует его и отсылает к
-  ISO 14289. Требование «текст читается обратно», которое несли уровни U и A, тоже снято: §6.2.10.7
-  формулирует `ToUnicode` через «should».
-- **Словарь информации о документе фактически удалён** (§6.1.3): PDF 2.0 объявил его устаревшим, и
-  часть 4 делает это нормативным. Он допустим только рядом с `PieceInfo` и только с `ModDate`.
-- **JavaScript разрешён в файле** (§6.6.2): ограничение перенесено на обработчик, который вправе
-  выполнить такое действие только по явному требованию человека. Части 1–3 запрещают его в файле.
-- **Прозрачность и JPEG 2000 разрешены**, как и в части 2.
+- **Levels A, U, and B are gone.** There is base PDF/A-4 and two extensions: **PDF/A-4e** (Annex B, 3D graphics) and **PDF/A-4f** (Annex A, embedded files of any type). They do not grade strictness; they add permissions.
+- **A structure tree is not required at any level.** §6.8 only recommends it and refers to ISO 14289. The "text must be extractable" requirement carried by Levels U and A is also removed: §6.2.10.7 formulates `ToUnicode` as "should".
+- **The document information dictionary is effectively removed** (§6.1.3): PDF 2.0 declared it deprecated, and Part 4 makes that normative. It is allowed only alongside `PieceInfo` and only with `ModDate`.
+- **JavaScript is allowed in the file** (§6.6.2): the restriction moved to the handler, which may execute such an action only on explicit human request. Parts 1–3 forbid it in the file.
+- **Transparency and JPEG 2000 are allowed**, as in Part 2.
 
-Обозначения те же, что в матрице частей 1–3:
+The legend is the same as in the Parts 1–3 matrix:
 
-| Знак | Смысл |
+| Symbol | Meaning |
 | --- | --- |
-| Г | генератор гарантирует: то, что пишет библиотека, требование не нарушает |
-| В | валидатор проверяет: нарушение в чужом или правленом файле будет найдено |
-| ГВ | и то, и другое |
-| — | не проверяется; в строке сказано, почему |
-| н/п | не применимо к тому, что библиотека умеет создавать |
+| G | Generator guarantees: what the library writes does not violate the requirement |
+| V | Validator checks: a violation in a third-party or edited file will be found |
+| GV | Both |
+| — | Not checked; the row explains why |
+| n/a | Not applicable to what the library can create |
 
-## 6.1 Структура файла
+## 6.1 File structure
 
-| Пункт | Требование | Состояние | Как |
+| Clause | Requirement | Status | How |
 | --- | --- | --- | --- |
-| 6.1.2 | `%PDF-2.n` с байта 0, следом комментарий из ≥4 байт больше 127 | ГВ | `PdfAProfile` ставит версию 2.0; валидатор читает байты файла и отличает 1.n от 2.n |
-| 6.1.3 | После последнего `%%EOF` нет данных | ГВ | общая проверка с частями 1–3 |
-| 6.1.3 | `Encrypt` в трейлере запрещён | ГВ | шифрование при архивном заявлении отклоняется |
-| 6.1.3 | `Info` запрещён без `PieceInfo`; с ним — только `ModDate` | ГВ | генератор не пишет словарь и не штампует в него `Producer`; валидатор отличает отсутствие в файле от досозданного моделью |
-| 6.1.4 | `xref` и заголовок подсекции разделены одним EOL | ГВ | общая проверка |
-| 6.1.5 | Чётное число цифр в шестнадцатеричной строке | — | писатель всегда пишет чётное; чтение чужих файлов не проверяется |
-| 6.1.6.1 | В словаре потока нет `F`, `FFilter`, `FDecodeParams` | ГВ | общая проверка |
-| 6.1.6.2 | `LZWDecode` запрещён; `Crypt` только с `Identity` | ГВ | общая проверка |
-| 6.1.7 | Имена — корректный UTF-8 после раскрытия `#` | — | генератор пишет только ASCII-имена |
-| 6.1.8 | Разделители вокруг `obj` и `endobj` | Г | писатель всегда так делает |
-| 6.1.9 | Во встроенном изображении нет `LZW`, `Crypt` и незнакомых фильтров | В | разбор потоков содержимого |
-| 6.1.10 | Линеаризация разрешена | н/п | библиотека не линеаризует |
-| 6.1.11 | В словаре разрешений только `UR3` и `DocMDP` | В | общая проверка |
-| 6.1.12 | `Version` в каталоге — ровно три символа вида `2.n` | ГВ | значение судится по модели: сохранение всё равно перезапишет его версией документа |
+| 6.1.2 | `%PDF-2.n` from byte 0, followed by a comment of ≥4 bytes all greater than 127 | GV | `PdfAProfile` sets version 2.0; the validator reads file bytes and distinguishes 1.n from 2.n |
+| 6.1.3 | No data after the final `%%EOF` | GV | shared check with Parts 1–3 |
+| 6.1.3 | `Encrypt` in the trailer is forbidden | GV | encryption is rejected when archival claim is made |
+| 6.1.3 | `Info` forbidden without `PieceInfo`; with it — only `ModDate` | GV | the generator does not write the dictionary or stamp `Producer` into it; the validator distinguishes a file that omits `Info` from in-memory model artifacts |
+| 6.1.4 | `xref` and subsection header separated by one EOL | GV | shared check |
+| 6.1.5 | Even number of digits in hexadecimal strings | — | the writer always writes an even count; reading third-party files is not checked |
+| 6.1.6.1 | Stream dictionary has no `F`, `FFilter`, `FDecodeParams` | GV | shared check |
+| 6.1.6.2 | `LZWDecode` forbidden; `Crypt` only with `Identity` | GV | shared check |
+| 6.1.7 | Names are valid UTF-8 after `#` unescaping | — | the generator writes ASCII names only |
+| 6.1.8 | Delimiters around `obj` and `endobj` | G | the writer always does this |
+| 6.1.9 | Embedded images have no `LZW`, `Crypt`, or unknown filters | V | content stream parsing |
+| 6.1.10 | Linearization is allowed | n/a | the library does not linearize |
+| 6.1.11 | Permissions dictionary contains only `UR3` and `DocMDP` | V | shared check |
+| 6.1.12 | Catalog `Version` is exactly three characters of the form `2.n` | GV | value is judged from the model: save will overwrite it with the document version anyway |
 
-## 6.2 Графика
+## 6.2 Graphics
 
-| Пункт | Требование | Состояние | Как |
+| Clause | Requirement | Status | How |
 | --- | --- | --- | --- |
-| 6.2.2 | Только операторы, определённые в ISO 32000-2 | В | общая проверка |
-| 6.2.3 | Output intent с `S = GTS_PDFA1` и валидным `DestOutputProfile` | ГВ | генерируемый профиль sRGB; `DestOutputProfileRef` запрещён |
-| 6.2.3 | Output intent на уровне страницы, если нет документного | В | `PdfPage.AddOutputIntent` умеет писать |
-| 6.2.4 | Цвет задан устройство-независимо | В | общая проверка, включая `DeviceCMYK` за RGB-профилем |
-| 6.2.5 | Нет `TR`, `HTO`; `TR2` только `Default`; `HalftoneType` 1 или 5 | В | общая проверка |
-| 6.2.7.1 | Нет `Alternates`, `OPI`; `Interpolate` ложно | В | общая проверка |
-| 6.2.7.3 | Ограничения JPEG 2000: 1/3/4 канала, битность 1–38, не `CIEJab` | — | JPX проходит насквозь, библиотека его не разбирает |
-| 6.2.8.2 | Ссылочные XObject запрещены | В | ключ `Ref` в потоке формы |
-| 6.2.9 | Прозрачность разрешена; blending space задан явно | В | требуется output intent либо `Group`/`CS` на странице |
-| 6.2.10.4 | Все используемые шрифты встроены | ГВ | общая проверка |
-| 6.2.10.5 | Ширины в словаре и в программе шрифта совпадают | В | общая проверка |
-| 6.2.10.6 | Кодировки TrueType: `cmap`, `MacRoman`/`WinAnsi`, `Differences` | В | общая проверка |
-| 6.2.10.3.1 | `Supplement` шрифта ≥ `Supplement` CMap | — | см. «Errata» ниже: направление сравнения оспорено и ISO не утверждено |
-| 6.2.10.9 | Нет ссылок на глиф `.notdef` | — | требует разбора всех строк показа с раскрытием кодировки |
+| 6.2.2 | Only operators defined in ISO 32000-2 | V | shared check |
+| 6.2.3 | Output intent with `S = GTS_PDFA1` and valid `DestOutputProfile` | GV | generated sRGB profile; `DestOutputProfileRef` forbidden |
+| 6.2.3 | Page-level output intent when there is no document-level one | V | `PdfPage.AddOutputIntent` can write it |
+| 6.2.4 | Color specified device-independently | V | shared check, including `DeviceCMYK` behind an RGB profile |
+| 6.2.5 | No `TR`, `HTO`; `TR2` only `Default`; `HalftoneType` 1 or 5 | V | shared check |
+| 6.2.7.1 | No `Alternates`, `OPI`; `Interpolate` is false | V | shared check |
+| 6.2.7.3 | JPEG 2000 restrictions: 1/3/4 channels, bit depth 1–38, not `CIEJab` | — | JPX passes through; the library does not parse it |
+| 6.2.8.2 | Reference XObjects forbidden | V | `Ref` key in form stream |
+| 6.2.9 | Transparency allowed; blending space declared explicitly | V | output intent or page `Group`/`CS` required |
+| 6.2.10.4 | All used fonts are embedded | GV | shared check |
+| 6.2.10.5 | Widths in dictionary and font program match | V | shared check |
+| 6.2.10.6 | TrueType encodings: `cmap`, `MacRoman`/`WinAnsi`, `Differences` | V | shared check |
+| 6.2.10.3.1 | Font `Supplement` ≥ CMap `Supplement` | — | see "Errata" below: comparison direction is disputed and not ISO-approved |
+| 6.2.10.9 | No references to the `.notdef` glyph | — | requires parsing all show strings with encoding resolution |
 
-## 6.3–6.6 Аннотации, формы, подписи, действия
+## 6.3–6.6 Annotations, forms, signatures, actions
 
-| Пункт | Требование | Состояние | Как |
+| Clause | Requirement | Status | How |
 | --- | --- | --- | --- |
-| 6.3.1 | `Sound`, `Screen`, `Movie` запрещены всегда | В | общая проверка |
-| 6.3.1 | `3D` и `RichMedia` — только в PDF/A-4e | В | уровень решает, а не часть |
-| 6.3.1 | `FileAttachment` — только в PDF/A-4f | В | |
-| 6.3.2 | У аннотаций есть `F`; `Print` установлен, `Hidden`/`NoView` сняты | В | общая проверка |
-| 6.3.3 | В `AP` только ключ `N` | В | общая проверка |
-| 6.4.1 | Нет ключа `A` у виджета; `NeedAppearances` ложно или отсутствует | В | общая проверка |
-| 6.4.2 | Нет `XFA`, нет `NeedsRendering` | В | общая проверка |
-| 6.5 | Подписи по профилям PAdES из ISO 32000-2 или ISO 14533-3 | — | `Inkwright.Signing` даёт блоки B-B…B-LTA; соответствие профилю ISO 14533-3 не проверяется |
-| 6.6.1 | `Launch`, `Sound`, `Movie`, `ResetForm`, `ImportData`, `Hide`, `Rendition`, `Trans` запрещены | В | общая проверка |
-| 6.6.1 | `SetOCGState` и `GoTo3DView` — только в PDF/A-4e | В | |
-| 6.6.1 | Именованные действия только четыре навигационных | В | общая проверка |
-| 6.6.2 | JavaScript разрешён в файле | В | часть 4 не сообщает о нём как о нарушении, части 1–3 сообщают |
-| 6.6.3 | `AA` каталога и страницы — только `E`, `X`, `D`, `U`, `Fo`, `Bl` | — | не проверяется |
+| 6.3.1 | `Sound`, `Screen`, `Movie` always forbidden | V | shared check |
+| 6.3.1 | `3D` and `RichMedia` — only in PDF/A-4e | V | level decides, not part |
+| 6.3.1 | `FileAttachment` — only in PDF/A-4f | V | shared check |
+| 6.3.2 | Annotations have `F`; `Print` set, `Hidden`/`NoView` cleared | V | shared check |
+| 6.3.3 | `AP` contains only key `N` | V | shared check |
+| 6.4.1 | Widget has no `A` key; `NeedAppearances` false or absent | V | shared check |
+| 6.4.2 | No `XFA`, no `NeedsRendering` | V | shared check |
+| 6.5 | Signatures per PAdES profiles from ISO 32000-2 or ISO 14533-3 | — | `Inkwright.Signing` provides B-B…B-LTA blocks; conformance to ISO 14533-3 profile is not checked |
+| 6.6.1 | `Launch`, `Sound`, `Movie`, `ResetForm`, `ImportData`, `Hide`, `Rendition`, `Trans` forbidden | V | shared check |
+| 6.6.1 | `SetOCGState` and `GoTo3DView` — only in PDF/A-4e | V | level decides, not part |
+| 6.6.1 | Named actions — only four navigational ones | V | shared check |
+| 6.6.2 | JavaScript allowed in the file | V | Part 4 does not report it as a violation; Parts 1–3 do |
+| 6.6.3 | Catalog and page `AA` — only `E`, `X`, `D`, `U`, `Fo`, `Bl` | — | not checked |
 
-## 6.7 Метаданные
+## 6.7 Metadata
 
-| Пункт | Требование | Состояние | Как |
+| Clause | Requirement | Status | How |
 | --- | --- | --- | --- |
-| 6.7.2.1 | В каталоге есть `Metadata`; XMP корректен | ГВ | общая проверка |
-| 6.7.2.1 | В заголовке XMP-пакета нет `bytes` и `encoding` | ГВ | общая проверка |
-| 6.7.3 | `pdfaid:part` равен 4 | ГВ | |
-| 6.7.3 | `pdfaid:rev` обязателен, четыре цифры года | ГВ | генератор пишет `2020` |
-| 6.7.3 | `pdfaid:conformance` только `E` или `F`, и только у этих уровней | ГВ | у базового PDF/A-4 свойство обязано отсутствовать, и это проверяется |
-| 6.7.2.3 | У потока метаданных есть связанный файл схемы `AFRelationship = Schema` | — | стандарт говорит «should» |
-| 6.7.5 | `xmpMM:History` описывает историю обработки | — | «should»; библиотека историю не ведёт |
+| 6.7.2.1 | Catalog has `Metadata`; XMP is valid | GV | shared check |
+| 6.7.2.1 | XMP packet header has no `bytes` or `encoding` | GV | shared check |
+| 6.7.3 | `pdfaid:part` equals 4 | GV | |
+| 6.7.3 | `pdfaid:rev` required, four-digit year | GV | the generator writes `2020` |
+| 6.7.3 | `pdfaid:conformance` only `E` or `F`, and only at those levels | GV | base PDF/A-4 must omit the property, and this is checked |
+| 6.7.2.3 | Metadata stream has an associated file with `AFRelationship = Schema` | — | the standard says "should" |
+| 6.7.5 | `xmpMM:History` describes processing history | — | "should"; the library does not maintain history |
 
-## 6.9–6.15 Прочее
+## 6.9–6.15 Other
 
-| Пункт | Требование | Состояние | Как |
+| Clause | Requirement | Status | How |
 | --- | --- | --- | --- |
-| 6.9 | У вложений есть `AFRelationship`, `F` и `UF` | В | общая проверка с частью 3 |
-| 6.9 | У базового PDF/A-4 вложения сами соответствуют PDF/A | В | по MIME-типу: не-PDF отсекается с советом взять PDF/A-4f. Соответствие вложенного PDF по существу не проверяется — нужна рекурсивная валидация |
-| 6.10 | У каждой конфигурации слоёв есть уникальный `Name` | В | общая проверка; в части 4 пункт 6.10, в частях 2–3 тот же — 6.9 |
-| 6.10 | В конфигурации нет `AS`; `Order` перечисляет все группы | В | общая проверка |
-| 6.11 | Нет `AlternatePresentations`, нет `PresSteps` | В | общая проверка |
-| 6.12 | В каталоге нет `Requirements` | В | общая проверка |
-| 6.13 | Обработчик соблюдает `PrintScaling` | н/п | требование к обработчику, не к файлу |
-| A.2 | У PDF/A-4f есть вложенный файл | ГВ | заявка на 4f без вложения отклоняется: это не изъян файла, а неверно выбранный уровень |
-| A.2 / B.4 | В PDF/A-4f и PDF/A-4e вложения могут быть любого типа | В | ограничение по MIME снимается именно этими уровнями |
+| 6.9 | Attachments have `AFRelationship`, `F`, and `UF` | V | shared check with Part 3 |
+| 6.9 | Base PDF/A-4 attachments must themselves conform to PDF/A | V | by MIME type: non-PDF is rejected with advice to use PDF/A-4f. Substantive conformance of embedded PDF is not checked — recursive validation is needed |
+| 6.10 | Each layer configuration has a unique `Name` | V | shared check; in Part 4 clause 6.10, in Parts 2–3 the same requirement is 6.9 |
+| 6.10 | Configuration has no `AS`; `Order` lists all groups | V | shared check |
+| 6.11 | No `AlternatePresentations`, no `PresSteps` | V | shared check |
+| 6.12 | Catalog has no `Requirements` | V | shared check |
+| 6.13 | Handler respects `PrintScaling` | n/a | requirement on the handler, not the file |
+| A.2 | PDF/A-4f has an embedded file | GV | a 4f claim without an attachment is rejected: not a file defect, but a wrong level choice |
+| A.2 / B.4 | PDF/A-4f and PDF/A-4e attachments may be of any type | V | MIME restriction is lifted specifically by these levels |
 
 ## Errata
 
-Учтены утверждённые ISO поправки PDF Association:
+Approved ISO errata from PDF Association are accounted for:
 
-- **#123 (утверждена).** Table 2 напечатана с опечаткой: свойство уровня названо `pdfa:conformance`,
-  тогда как на деле это **`pdfaid:conformance`**. Та же поправка возвращает пространству имён форму
-  `http://www.aiim.org/pdfa/ns/id/` вместо напечатанного `https://…` и разрешает читателю принимать
-  оба. Библиотека пишет и читает `http`, как и для частей 1–3.
-- **#104 (утверждена).** Редакционная перенумерация примечаний в §6.2.9 и ссылка на Annex Q
-  ISO 32000-2. На код не влияет.
-- **#77 (предложена, ISO не утверждена).** Предлагает в §6.2.10.3.1 заменить «greater than or equal»
-  на «less than or equal» в сравнении `Supplement`. Направление противоположно напечатанному, и та
-  же формулировка в WTPDF 1.0 §8.4.5.3.1 совпадает с текущим текстом стандарта, а не с поправкой.
-  Пока ISO не решит, библиотека это сравнение не проверяет вовсе — правило, которое может оказаться
-  развёрнутым в обратную сторону, хуже отсутствующего.
+- **#123 (approved).** Table 2 was printed with a typo: the level property is named `pdfa:conformance`, whereas in practice it is **`pdfaid:conformance`**. The same correction restores the namespace URI form `http://www.aiim.org/pdfa/ns/id/` instead of the printed `https://…` and allows readers to accept both. The library writes and reads `http`, as for Parts 1–3.
+- **#104 (approved).** Editorial renumbering of notes in §6.2.9 and reference to Annex Q of ISO 32000-2. No impact on code.
+- **#77 (proposed, not ISO-approved).** Proposes replacing "greater than or equal" with "less than or equal" in the §6.2.10.3.1 `Supplement` comparison. The direction is opposite to what was printed, and the same wording in WTPDF 1.0 §8.4.5.3.1 matches the current standard text, not the erratum. Until ISO decides, the library does not check this comparison at all — a rule that may end up reversed is worse than none.
 
-Индекс errata предупреждает, что готовится датированная ревизия PDF/A-4, которая вберёт все
-опубликованные решения и согласует формулировки с PDF/X-6. Когда она выйдет, `pdfaid:rev` должен
-будет измениться с `2020` на год ревизии — это единственное место в коде, которое её затронет
-(`PdfAProfile.PartFourRevision`).
+The errata index warns that a dated revision of PDF/A-4 is being prepared that will incorporate all published decisions and align wording with PDF/X-6. When it appears, `pdfaid:rev` will need to change from `2020` to the revision year — the only place in code it will affect (`PdfAProfile.PartFourRevision`).
 
-## Чего эта матрица не обещает
+## What this matrix does not promise
 
-То же, что и матрица частей 1–3: соответствие — это свойство файла целиком, а валидатор проверяет
-то, что выводится из байтов и объектного графа. Строки с «—» перечислены честно и означают ровно
-одно: библиотека об этом требовании молчит, а не подтверждает его.
+Same as the Parts 1–3 matrix: conformance is a property of the file as a whole, and the validator checks what can be inferred from bytes and the object graph. Rows marked "—" are listed honestly and mean exactly one thing: the library is silent about that requirement, not that it confirms it.

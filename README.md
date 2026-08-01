@@ -179,8 +179,6 @@ numbers move with the machine, so treat them as a shape rather than a promise.
 
 ## Documentation
 
-The documentation is written in Russian; the API reference in the XML doc comments is in English.
-
 - [Getting started](https://github.com/WrightDocumentSuite/inkwright/blob/main/docs/getting-started.md)
 - [Architecture](https://github.com/WrightDocumentSuite/inkwright/blob/main/docs/architecture.md)
 - [Reading and editing](https://github.com/WrightDocumentSuite/inkwright/blob/main/docs/reading.md)

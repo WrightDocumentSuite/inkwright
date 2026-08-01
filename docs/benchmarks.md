@@ -1,73 +1,71 @@
-# Бенчмарки
+# Benchmarks
 
 ```bash
 dotnet run -c Release --project benchmarks/Inkwright.Benchmarks -- --filter *
 ```
 
-Машина: Intel Core i7-8700, Windows Server 2022, .NET 10.0.10, BenchmarkDotNet 0.15.8.
+Machine: Intel Core i7-8700, Windows Server 2022, .NET 10.0.10, BenchmarkDotNet 0.15.8.
 
-Сравнение идёт с [PDFsharp 6.2](https://www.nuget.org/packages/PDFsharp) и
-[PdfPig 0.1.11](https://www.nuget.org/packages/PdfPig) — единственными PDF-библиотеками для .NET,
-которые можно поставить рядом без нативных зависимостей и без AGPL. QuestPDF в сравнение не входит:
-она тащит ~50 МБ нативного Skia на каждый RID, и мерить против неё managed-код нечестно в обе
-стороны.
+Comparison is against [PDFsharp 6.2](https://www.nuget.org/packages/PDFsharp) and
+[PdfPig 0.1.11](https://www.nuget.org/packages/PdfPig) — the only PDF libraries for .NET that can be
+benchmarked side by side without native dependencies or AGPL-licensed code. QuestPDF is not included: it
+pulls in ~50 MB of native Skia per RID, and measuring managed code against it is unfair both ways.
 
-## Генерация отчёта
+## Report generation
 
-Таблица на 40 строк на страницу, повторяющийся заголовок, колонтитул с номерами страниц.
-PDFsharp получает уже расставленные вызовы отрисовки — раскладывать ему нечего, поэтому его
-результат стоит читать как нижнюю границу для любой библиотеки на той же странице.
+Table with 40 rows per page, repeating header, footer with page numbers. PDFsharp receives pre-placed
+drawing calls — nothing to lay out — so its result should be read as a lower bound for any library on
+the same page.
 
-| | 10 страниц | 200 страниц | Аллокации (200 стр.) |
+| | 10 pages | 200 pages | Allocations (200 pg.) |
 | --- | ---: | ---: | ---: |
-| **Inkwright, канва** | **1.4 ms** | **27.3 ms** | **13.6 MB** |
+| **Inkwright, canvas** | **1.4 ms** | **27.3 ms** | **13.6 MB** |
 | PDFsharp | 3.6 ms | 57.7 ms | 38.1 MB |
-| Inkwright, компоновщик | 8.5 ms | 204.0 ms | 108.7 MB |
+| Inkwright, layout engine | 8.5 ms | 204.0 ms | 108.7 MB |
 
-Низкоуровневая канва вдвое быстрее PDFsharp при втрое меньших аллокациях. Компоновщик стоит
-примерно в семь раз дороже канвы — он измеряет каждую ячейку, ломает строки, разливает таблицу по
-страницам и проходит документ дважды, чтобы узнать их число. Это цена за то, чтобы не считать
-координаты руками; когда координаты уже известны, канва рядом.
+The low-level canvas is twice as fast as PDFsharp with one-third the allocations. The layout engine
+costs roughly seven times more than the canvas — it measures every cell, breaks lines, flows the table
+across pages, and walks the document twice to determine page count. That is the price for not
+computing coordinates by hand; when coordinates are already known, the canvas is the right tool.
 
-## Чтение
+## Reading
 
-Документ на 90 страниц, 4000 абзацев.
+90-page document, 4000 paragraphs.
 
-| | Время | Аллокации |
+| | Time | Allocations |
 | --- | ---: | ---: |
-| **Inkwright, открыть** | **217 µs** | **188 KB** |
-| PdfPig, открыть | 724 µs | 485 KB |
-| **Inkwright, извлечь текст** | **93 ms** | **116 MB** |
-| PdfPig, извлечь текст | 135 ms | 103 MB |
-| **Inkwright, переписать** | **717 µs** | **439 KB** |
+| **Inkwright, open** | **217 µs** | **188 KB** |
+| PdfPig, open | 724 µs | 485 KB |
+| **Inkwright, extract text** | **93 ms** | **116 MB** |
+| PdfPig, extract text | 135 ms | 103 MB |
+| **Inkwright, rewrite** | **717 µs** | **439 KB** |
 
-Открытие втрое быстрее при 2.6× меньшей памяти: читается только таблица перекрёстных ссылок,
-объекты разбираются в момент обращения.
+Opening is three times faster with 2.6× less memory: only the cross-reference table is read; objects
+are parsed on access.
 
-Извлечение в полтора раза быстрее и немного прожорливее по памяти — буквы отдаются с координатами,
-кеглем и именем шрифта, а не одной плоской строкой.
+Extraction is 1.5× faster and slightly more memory-hungry — letters are returned with coordinates,
+font size, and font name, not as a single flat string.
 
-Перезапись 90-страничного файла за 0.7 мс — это не магия, а следствие того, что объект, который
-модель ни разу не разбирала, копируется байт в байт.
+Rewriting a 90-page file in 0.7 ms is not magic but a consequence of objects the model never parsed
+being copied byte for byte.
 
-## Корпус
+## Corpus
 
-Регрессии ловятся не микробенчмарками, а корпусом: 7807 файлов из тестовых ресурсов библиотек и
-фуззинг-наборов читаются, переписываются и читаются снова.
+Regressions are caught not by microbenchmarks but by a corpus: 7807 files from library test resources
+and fuzzing sets are opened, rewritten, and read again.
 
 | | |
 | --- | ---: |
-| Файлов в корпусе | 7807 |
-| Открылись | 7800 |
-| Отвергнуты парсером (намеренно повреждённые фикстуры) | 5 |
-| Пустые файлы (парсер не вызывается) | 2 |
-| Отказов round-trip среди допущенных к перезаписи | 0 |
-| Расхождений в числе страниц | 0 |
-| Необработанных исключений | 0 |
-| Страниц всего | 55 827 |
+| Files in corpus | 7807 |
+| Opened successfully | 7800 |
+| Rejected by parser (intentionally corrupted fixtures) | 5 |
+| Empty files (parser not invoked) | 2 |
+| Round-trip failures among files allowed to rewrite | 0 |
+| Page count mismatches | 0 |
+| Unhandled exceptions | 0 |
+| Total pages | 55 827 |
 
-Остальные 235 — зашифрованные файлы, к которым не подошёл ни пустой пароль, ни очевидные
-кандидаты; из 250 зашифрованных открываются 129, а не открываются в основном сертификатные, которых
-библиотека не поддерживает.
+Of the 250 encrypted files in the corpus, 129 open with an empty or obvious password; the rest are
+mostly certificate-encrypted files the library does not support.
 
-Полный проход по корпусу занимает около 15 секунд в Release.
+A full corpus pass takes about 15 seconds in Release.

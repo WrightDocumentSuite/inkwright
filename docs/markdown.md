@@ -1,8 +1,8 @@
-# Экспорт PDF в Markdown
+# Exporting PDF to Markdown
 
-Экспорт строит один `document.md` и, когда в логической структуре встречаются растровые
-`Figure`, каталог sidecar-изображений. Рендеринг сначала происходит целиком в памяти и не меняет
-исходный `PdfDocument`.
+Export produces a single `document.md` and, when raster `Figure` elements appear in the logical structure,
+a sidecar image directory. Rendering happens entirely in memory first and does not modify the
+source `PdfDocument`.
 
 ```csharp
 using Inkwright;
@@ -18,65 +18,65 @@ foreach (MarkdownExportWarning warning in markdown.Diagnostics)
 
 await markdown.SaveAsync("export");
 // export/document.md
-// export/media/image1.png, когда он упомянут в Markdown
+// export/media/image1.png when referenced in Markdown
 ```
 
-Короткая форма делает тот же in-memory проход и затем сохраняет результат:
+The short form performs the same in-memory pass and then saves the result:
 
 ```csharp
 await pdf.ExportMarkdownAsync("export");
 ```
 
-## Откуда берётся семантика
+## Where Semantics Come From
 
-У PDF нет стандарта преобразования в Markdown. Inkwright соединяет две нормативные модели:
+PDF has no standard for conversion to Markdown. Inkwright connects two normative models:
 
-- логическую структуру Tagged PDF из ISO 32000-2 §§14.7–14.9;
-- синтаксис CommonMark 0.31.2 либо GitHub Flavored Markdown.
+- the logical structure of Tagged PDF from ISO 32000-2 §§14.7–14.9;
+- CommonMark 0.31.2 syntax or GitHub Flavored Markdown.
 
-`RoleMap` и PDF 2.0 `RoleMapNS` разрешаются транзитивно. Порядок смешанного массива `/K`
-сохраняется между дочерними элементами, MCID и `OBJR`; иначе абзац, ссылка или картинка могли бы
-поменяться местами. `ActualText` на structure element и непосредственно на marked-content sequence
-заменяет видимые глифы посимвольно, без схлопывания пробелов и переносов, как предписывает PDF.
-Одинаковые MCID в page content и Form XObject различаются по `/Stm`; атрибуты читаются и из `/A`,
-и из `ClassMap`, причём прямое значение имеет приоритет. Теги трактуются как стандартные только в
-PDF namespace; совпавшее имя из пользовательского namespace не превращается, например, в ссылку.
-`Alt` становится альтернативным текстом фигуры.
+`RoleMap` and PDF 2.0 `RoleMapNS` are resolved transitively. The order of the mixed `/K` array
+is preserved across child elements, MCIDs, and `OBJR`; otherwise a paragraph, link, or image could
+swap places. `ActualText` on a structure element and directly on a marked-content sequence
+replaces visible glyphs character by character, without collapsing spaces and line breaks, as PDF prescribes.
+Identical MCIDs in page content and Form XObject are distinguished by `/Stm`; attributes are read from both `/A`
+and `ClassMap`, with the direct value taking priority. Tags are treated as standard only in the
+PDF namespace; a matching name from a user namespace does not become, for example, a link.
+`Alt` becomes the figure's alternative text.
 
-Основные соответствия:
+Main mappings:
 
 | Tagged PDF | Markdown |
 | --- | --- |
-| `H1`…`H6` | ATX-заголовки `#`…`######` |
-| `P`, `Caption` | абзац |
-| `L` / `LI` / `LBody` | упорядоченный или неупорядоченный список по `ListNumbering` |
-| description list | `<dl>` с диагностикой HTML fallback |
-| простая `Table` | GFM pipe table |
-| таблица со spans, row headers, смешанной header row либо режим CommonMark | HTML `<table>` |
-| `Link` + `OBJR` URI action | Markdown-ссылка после проверки схемы |
-| растровая `Figure` | PNG sidecar и Markdown image |
-| `BlockQuote`, `Code`, `Strong`, `Em` | соответствующая Markdown-конструкция |
-| `Formula` с presentation MathML | линейный текст формулы |
-| `Form` + Widget либо `PrintField` | доступное имя, значение или состояние поля |
+| `H1`…`H6` | ATX headings `#`…`######` |
+| `P`, `Caption` | paragraph |
+| `L` / `LI` / `LBody` | ordered or unordered list per `ListNumbering` |
+| description list | `<dl>` with HTML fallback diagnostic |
+| simple `Table` | GFM pipe table |
+| table with spans, row headers, mixed header row, or CommonMark mode | HTML `<table>` |
+| `Link` + `OBJR` URI action | Markdown link after scheme check |
+| raster `Figure` | PNG sidecar and Markdown image |
+| `BlockQuote`, `Code`, `Strong`, `Em` | corresponding Markdown construct |
+| `Formula` with presentation MathML | linear formula text |
+| `Form` + Widget or `PrintField` | accessible name, value, or field state |
 
-Decimal/Ordered использует нативный Markdown marker, включая явный цифровой `Lbl`. Roman/Alpha и
-произвольный `Lbl` сохраняются как текст внутри пункта с `StructureApproximated`: иначе Markdown
-молча показал бы другую метку. `ContinuedList`/`ContinuedFrom` также диагностируются, поскольку у
-Markdown нет идентичности списка между раздельными блоками.
+Decimal and Ordered numbering use the native Markdown marker, including explicit numeric `Lbl`. Roman/Alpha and
+arbitrary `Lbl` are preserved as text inside the item with `StructureApproximated`: otherwise Markdown
+would silently show a different label. `ContinuedList`/`ContinuedFrom` are also diagnosed, since
+Markdown has no list identity across separate blocks.
 
-Внешние URI принимаются только для `http`, `https`, `mailto`, `ftp` и относительных целей.
-Исполняемые и неизвестные абсолютные схемы, например `javascript:`, не попадают в ссылку и
-фиксируются как `UnsafeLinkSkipped`. Перед проверкой декодируются HTML character references, поэтому
-`javascript&#x3a;` не обходит allowlist; относительный URI разрешается через Catalog `/URI /Base`.
-Внутренние PDF destinations пока остаются обычным текстом:
-страничный адрес PDF не даёт стабильного якоря в Markdown.
+External URIs are accepted only for `http`, `https`, `mailto`, `ftp`, and relative targets.
+Executable and unknown absolute schemes, for example `javascript:`, do not become links and
+are recorded as `UnsafeLinkSkipped`. HTML character references are decoded before checking, so
+`javascript&#x3a;` does not bypass the allowlist; relative URIs are resolved via Catalog `/URI /Base`.
+Internal PDF destinations remain plain text for now:
+a PDF page address does not yield a stable anchor in Markdown.
 
-## Нетегированные PDF
+## Untagged PDFs
 
-По умолчанию `PreferTagged` использует дерево структуры, когда оно есть. Для нетегированного файла
-экспортёр берёт видимый текст страниц, экранирует Markdown и добавляет `UntaggedFallback`. Он не
-угадывает молча заголовки, таблицы и колонки по внешнему виду: у фиксированной страницы несколько
-правдоподобных семантических разборов.
+By default `PreferTagged` uses the structure tree when it exists. For an untagged file the
+exporter takes visible page text, escapes Markdown, and adds `UntaggedFallback`. It does not
+silently guess headings, tables, and columns from appearance: a fixed-layout page has several
+plausible semantic parses.
 
 ```csharp
 var options = new MarkdownExportOptions
@@ -85,15 +85,15 @@ var options = new MarkdownExportOptions
 };
 ```
 
-`RequireTagged` отклоняет файл без structure tree. `PlainText` намеренно игнорирует теги и всегда
-использует текст страниц. Это удобно для сравнения, но также отмечается диагностикой.
+`RequireTagged` rejects a file without a structure tree. `PlainText` deliberately ignores tags and always
+uses page text. This is useful for comparison but is also flagged in diagnostics.
 
-## Настройки
+## Options
 
 ```csharp
 var options = new MarkdownExportOptions
 {
-    Flavor = MarkdownFlavor.GitHub,             // значение по умолчанию
+    Flavor = MarkdownFlavor.GitHub,             // default
     StructureMode = MarkdownStructureMode.PreferTagged,
     IncludeImages = true,
     IncludeHiddenLayers = false,
@@ -108,29 +108,27 @@ var options = new MarkdownExportOptions
 MarkdownDocument markdown = pdf.ToMarkdown(options);
 ```
 
-`MediaDirectoryName` — переносимый относительный путь. Абсолютные пути, `.`/`..`, пустые сегменты,
-управляющие символы и имена устройств Windows отклоняются до рендеринга. В Markdown пробелы и
-прочие специальные байты сегментов кодируются как URL; на диске сохраняются исходные имена
-каталогов.
+`MediaDirectoryName` is a portable relative path. Absolute paths, `.`/`..`, empty segments,
+control characters, and Windows device names are rejected before rendering. In Markdown, spaces and
+other special bytes in path segments are URL-encoded; original directory names are preserved on disk.
 
-Пределы страниц, структуры и текста останавливают экспорт исключением до возврата частичного
-`MarkdownDocument`. Предел sidecar-изображений мягкий: дальнейший растр не удерживается в памяти,
-`Figure` сохраняет альтернативный текст, а диагностика получает `ImageSkipped`. Общий предел
-декодированного PDF stream дополнительно задаёт `PdfFilterLimits.MaxDecodedBytes`.
+Limits on pages, structure, and text stop export with an exception before returning a partial
+`MarkdownDocument`. The sidecar image limit is soft: further raster data is not kept in memory,
+the `Figure` keeps alternative text, and diagnostics receive `ImageSkipped`. An overall limit on
+decoded stream size is additionally enforced by `PdfFilterLimits.MaxDecodedBytes`.
 
-Изображение связывается с `Figure` по `OBJR` либо по фактическому вызову XObject внутри того же
-MCID, включая Form XObject. Декодируемые растры приводятся к PNG, одинаковые PNG-байты получают
-один sidecar в порядке первого упоминания. Векторная фигура, JPX или повреждённое изображение не
-растеризуется: используется `Alt` и появляется `ImageSkipped`. Выключенный слой учитывается как на
-marked content/Form, так и на самом Image XObject. Повторная ссылка на один уже не декодировавшийся
-ресурс не запускает декодер снова.
+An image is linked to a `Figure` via `OBJR` or via the actual XObject invocation within the same
+MCID, including Form XObject. Decodable rasters are converted to PNG; identical PNG bytes share one
+sidecar in first-mention order. A vector figure, JPX, or damaged image is not
+rasterized: `Alt` is used and `ImageSkipped` appears. A disabled layer is respected both on
+marked content/Form and on the Image XObject itself. A repeat reference to the same not-yet-decoded
+resource does not run the decoder again.
 
-## Метрики корректности
+## Correctness Metrics
 
-`MarkdownDocument.Metrics` предназначен для corpus/CI-проверок. Это не субъективная оценка качества,
-а воспроизводимые счётчики: страницы и ошибки страниц, структура, distinct `(page, stream, MCID)` и
-число разрешившихся ссылок, sidecar-изображения, неудачные image resources, предупреждения и длина
-результата.
+`MarkdownDocument.Metrics` is intended for corpus/CI checks. This is not a subjective quality score
+but reproducible counters: pages and page errors, structure, distinct `(page, stream, MCID)` and
+number of resolved links, sidecar images, failed image resources, warnings, and output length.
 
 ```csharp
 MarkdownExportMetrics metrics = markdown.Metrics;
@@ -138,28 +136,28 @@ Console.WriteLine($"MCID coverage: {metrics.MarkedContentCoverage:P1}");
 Console.WriteLine($"Skipped pages: {metrics.SkippedPages}");
 ```
 
-`MarkedContentCoverage == 1` означает, что каждая distinct MCR-ссылка дала текст; ноль ссылок также
-считается полным покрытием. Меньшее значение не обязательно ошибка библиотеки: Figure, векторный
-контент и намеренно пустая marked-content sequence законно не дают глифов, поэтому причину следует
-сопоставить с `Diagnostics`.
+`MarkedContentCoverage == 1` means every distinct MCR reference produced text; zero references also
+counts as full coverage. A lower value is not necessarily a library error: Figure, vector
+content, and intentionally empty marked-content sequences legitimately produce no glyphs, so the cause should
+be matched against `Diagnostics`.
 
-## Детерминированность и запись
+## Determinism and Writing
 
-Одинаковая модель с одинаковыми настройками даёт одинаковые текст, порядок диагностик, порядок
-изображений и имена `image1.png`, `image2.png`, … Текст использует LF и ровно один завершающий LF.
-`SaveAsync` пишет UTF-8 без BOM, перезаписывает только принадлежащие текущему результату файлы и не
-удаляет посторонние или устаревшие файлы. Существующий symlink/junction в пути `document.md`, media
-или sidecar отклоняется: одна лексическая проверка `..` не защищает от ухода через reparse point.
-Pre-cancelled `ExportMarkdownAsync` прекращается до рендера и создания каталога. Отмена после начала
-записи не транзакционна: уже записанные файлы могут остаться на диске.
+The same model with the same options yields the same text, diagnostic order, image order,
+and names `image1.png`, `image2.png`, … Text uses LF and exactly one trailing LF.
+`SaveAsync` writes UTF-8 without BOM, overwrites only files belonging to the current result, and does not
+delete foreign or stale files. An existing symlink/junction in the path to `document.md`, media
+directory, or sidecar is rejected: a lexical `..` check alone does not protect against escape via reparse point.
+A pre-cancelled `ExportMarkdownAsync` stops before render and directory creation. Cancellation after writing
+starts is not transactional: files already written may remain on disk.
 
-Повреждение decode/content одной страницы даёт `ContentSkipped` с номером страницы и не мешает
-обработать следующие. U+0000 никогда не попадает в Markdown: он заменяется на U+FFFD.
+Damage to decode/content on one page yields `ContentSkipped` with the page number and does not block
+processing the next pages. U+0000 never enters Markdown: it is replaced with U+FFFD.
 
-Диагностика — часть контракта, а не журнал исключений. Она сообщает о нетегированном fallback,
-структурном приближении, HTML fallback, пропущенном содержимом, небезопасной ссылке или картинке,
-которую нельзя было надёжно сохранить. Одинаковые `Kind` и `Subject` выдаются один раз.
+Diagnostics are part of the contract, not an exception log. They report untagged fallback,
+structural approximation, HTML fallback, skipped content, unsafe link, or an image
+that could not be saved reliably. Identical `Kind` and `Subject` are emitted once.
 
-Экспортёр не применяет разрешение владельца `SourcePermissions.CopyContents` автоматически. Если
-приложение обязано соблюдать ограничения исходного PDF, оно должно проверить `SourcePermissions`
-до `ToMarkdown` или `ExportMarkdownAsync`.
+The exporter does not apply the owner's `SourcePermissions.CopyContents` permission automatically. If
+the application must honor the source PDF's restrictions, it should check `SourcePermissions`
+before `ToMarkdown` or `ExportMarkdownAsync`.

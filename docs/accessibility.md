@@ -1,20 +1,20 @@
-# Доступность: PDF/UA
+# Accessibility: PDF/UA
 
-## Что это и чего от него ждать
+## What It Is and What to Expect
 
-PDF/UA — профиль доступности PDF, стандартизованный как ISO 14289. Часть 1 (2014) опирается на
-ISO 32000-1 и излагает требования в разделе 7; часть 2 (2024) опирается на ISO 32000-2 и излагает
-их в разделе 8, добавляя пространства имён структуры из ISO/TS 32005.
+PDF/UA is a PDF accessibility profile standardized as ISO 14289. Part 1 (2014) is based on
+ISO 32000-1 and states requirements in clause 7; Part 2 (2024) is based on ISO 32000-2 and states
+them in clause 8, adding structure namespaces from ISO/TS 32005.
 
-Главное, что нужно понимать про машинную проверку доступности: большая часть требований стандарта —
-это суждение, которое программа вынести не может. Правильно ли выбран тег для этого куска текста?
-Совпадает ли порядок чтения с тем, как документ прочитал бы человек? Описывает ли альтернативный
-текст то, что на картинке? Ни один валидатор в мире не отвечает на такие вопросы.
+The main thing to understand about automated accessibility checking: most of the standard's requirements
+are judgments that software cannot make. Was the correct tag chosen for this piece of text?
+Does the reading order match how a person would read the document? Does the alternative text
+describe what is in the image? No validator in the world answers such questions.
 
-Отсюда правило: **документ, прошедший проверку, не является тем самым доступным; документ, её не
-прошедший, точно недоступен.** Проверка отсекает нарушения, видимые из самого файла.
+Hence the rule: **a document that passes validation is not necessarily accessible; a document that
+fails validation is definitely not accessible.** Validation filters out violations visible from the file itself.
 
-## Как пользоваться
+## How to Use
 
 ```csharp
 using Inkwright.Layout;
@@ -27,161 +27,161 @@ foreach (PdfUaProblem problem in PdfUaProfile.Violations(problems))
     Console.WriteLine(problem);
 ```
 
-Каждая находка несёт номер пункта стандарта и уровень: `Violation` — нарушено требование,
-`Advice` — не выполнена рекомендация. Стандарт формулирует немало через «следует», и отчёт, который
-не различает «обязан» и «следует», — это отчёт, по которому нельзя расставить приоритеты.
+Each finding carries a clause number from the standard and a level: `Violation` means a requirement
+was broken, `Advice` means a recommendation was not met. The standard formulates many items using
+"should", and a report that does not distinguish "shall" from "should" is a report you cannot use to prioritize issues.
 
-Заявить соответствие:
+Declare conformance:
 
 ```csharp
-PdfUaProfile.Declare(document, PdfUaConformance.Ua1, "Годовой отчёт за 2025 год");
+PdfUaProfile.Declare(document, PdfUaConformance.Ua1, "Annual Report for 2025");
 ```
 
-Метод пишет схему идентификации в XMP, заголовок и два обязательных ключа каталога: `MarkInfo`
-с `Marked` и `ViewerPreferences` с `DisplayDocTitle`. Он не делает документ соответствующим —
-он делает заявление. Проверять всё равно нужно.
+The method writes an identification schema to XMP, the document title, and two required catalog keys: `MarkInfo`
+with `Marked` and `ViewerPreferences` with `DisplayDocTitle`. It does not make the document conforming —
+it makes a declaration. You still need to validate.
 
-## Что проверяется
+## What Is Checked
 
-### Документ в целом
+### Document as a Whole
 
-| Пункт (UA-1 / UA-2) | Требование | Как проверяется |
+| Clause (UA-1 / UA-2) | Requirement | How It Is Checked |
 | --- | --- | --- |
-| 5 | Файл заявляет соответствие через схему идентификации в XMP | XML-разбор требует единственный `part` нужного значения; для UA-2 также обязательный `rev = 2024` |
-| 7.1 / 8.2 | Содержимое размечено, дерево структуры есть | `StructTreeRoot`, `MarkInfo` с `Marked`, дерево непусто |
-| 7.1 / 8.2 | Разметка не помечена как сомнительная | `Suspects` должен быть ложью |
-| 7.1 / 8.2.2 | Нестандартные теги отображаются на стандартные | Цепочка `RoleMap` прослеживается до стандартного типа |
-| 7.1 / 8.2.2 | Стандартные теги не переопределяются | Ключи `RoleMap` сверяются со списком стандартных типов |
-| 7.1 / 8.11.1 | В метаданных есть заголовок | Ищется `dc:title` |
-| 7.1 / 8.11.2 | Читалке велено показывать заголовок | `ViewerPreferences` с `DisplayDocTitle` истина |
-| 7.2 / 8.4.5 | Объявлен естественный язык | `Lang` в каталоге либо на всех корнях структуры |
-| 7.16 / 8.1 | Шифрование не запрещает извлечение вспомогательной технике | Десятый бит `P` |
-| 7.10 / 8.7 | У конфигураций слоёв есть имена, нет автопереключения | `Name` при наличии `Configs`, отсутствие `AS` |
-| 7.17 / 8.12.2 | У длинного документа есть оглавление | Совет при десяти и более страницах без `Outlines` |
+| 5 | The file declares conformance via an identification schema in XMP | XMP parsing requires a single `part` of the correct value; for UA-2, mandatory `rev = 2024` as well |
+| 7.1 / 8.2 | Content is marked up; a structure tree exists | `StructTreeRoot`, `MarkInfo` with `Marked`, tree is non-empty |
+| 7.1 / 8.2 | Markup is not flagged as suspect | `Suspects` must be false |
+| 7.1 / 8.2.2 | Non-standard tags map to standard ones | The `RoleMap` chain is traced to a standard type |
+| 7.1 / 8.2.2 | Standard tags are not overridden | `RoleMap` keys are checked against the list of standard types |
+| 7.1 / 8.11.1 | Metadata contains a title | `dc:title` is looked up |
+| 7.1 / 8.11.2 | The reader is instructed to show the title | `ViewerPreferences` with `DisplayDocTitle` is true |
+| 7.2 / 8.4.5 | Natural language is declared | `Lang` in the catalog or on all structure roots |
+| 7.16 / 8.1 | Encryption does not block assistive technology extraction | Tenth bit of `P` |
+| 7.10 / 8.7 | Layer configurations have names; no auto-switching | `Name` when `Configs` is present; absence of `AS` |
+| 7.17 / 8.12.2 | Long documents have a table of contents | Advice when ten or more pages without `Outlines` |
 
-### Дерево структуры
+### Structure Tree
 
-| Пункт | Требование | Как проверяется |
+| Clause | Requirement | How It Is Checked |
 | --- | --- | --- |
-| 7.4.2 / 8.2.5.2 | Заголовки начинаются с первого уровня и не перескакивают | Последовательность `H1`…`Hn` в порядке обхода |
-| 7.4.4 | Документ либо сильно, либо слабо структурирован, но не оба сразу | Совместное присутствие `H` и нумерованных заголовков |
-| 7.4.4 | У узла не более одного дочернего `H` | Подсчёт детей с тегом `H` |
-| 7.3 / 8.5 | У иллюстраций есть замена текстом | `Alt` или `ActualText` у `Figure` |
-| 7.7 / 8.5 | У формул есть замена текстом | `Alt` или `ActualText` у `Formula` |
-| 7.5 / 8.2.5.9 | Заголовочные ячейки таблиц указывают охват | `Scope` или `Headers` у `TH`; отсутствие `TH` — совет |
-| 7.6 / 8.2.5.8 | Списки состоят из элементов списка | Дети `L` — только `LI`, `Caption` или `L` |
-| 7.6 / 8.2.5.8 | Упорядоченный список говорит, как он нумерован | `ListNumbering` при наличии `Lbl` у элементов |
-| 7.9 / 8.2.5.11 | У сносок есть уникальные идентификаторы | `ID` у `Note` и `FENote`, проверка на повтор |
+| 7.4.2 / 8.2.5.2 | Headings start at the first level and do not skip levels | Sequence of `H1`…`Hn` in traversal order |
+| 7.4.4 | The document is either strongly or weakly structured, but not both | Joint presence of `H` and numbered headings |
+| 7.4.4 | A node has at most one child `H` | Count of children tagged `H` |
+| 7.3 / 8.5 | Illustrations have a text replacement | `Alt` or `ActualText` on `Figure` |
+| 7.7 / 8.5 | Formulas have a text replacement | `Alt` or `ActualText` on `Formula` |
+| 7.5 / 8.2.5.9 | Table header cells indicate scope | `Scope` or `Headers` on `TH`; absence of `TH` is advice |
+| 7.6 / 8.2.5.8 | Lists consist of list items | Children of `L` are only `LI`, `Caption`, or `L` |
+| 7.6 / 8.2.5.8 | An ordered list states how it is numbered | `ListNumbering` when elements have `Lbl` |
+| 7.9 / 8.2.5.11 | Footnotes have unique identifiers | `ID` on `Note` and `FENote`; duplicate check |
 
-### Взаимодействие
+### Interaction
 
-| Пункт | Требование | Как проверяется |
+| Clause | Requirement | How It Is Checked |
 | --- | --- | --- |
-| 7.18.1 / 8.9.2 | У видимой аннотации есть описание | `Contents` у всего, кроме ссылок и полей формы |
-| 7.18.2 | Аннотации подрезки цветов запрещены | Подтип `TrapNet` |
-| 7.18.3 / 8.9.2.2 | Порядок обхода задаётся структурой | `Tabs` равно `S` на страницах с аннотациями |
-| 7.18.4 / 8.10 | Поля формы вложены в элементы `Form` | Наличие `Form` в дереве при наличии виджетов |
-| 7.18.5 / 8.9.2.4 | У ссылок есть описание, нет серверных карт | `Contents`; `IsMap` не истина |
-| 7.15 | Динамические формы XFA запрещены | Поиск `dynamicRender` со значением `required` |
-| 7.11 / 8.14 | У вложений есть оба имени файла | `F` и `UF`; `Desc` — совет |
-| 7.20 / 8.2.2 | Ссылочные объекты формы запрещены | Ключ `Ref` в потоке объекта формы |
+| 7.18.1 / 8.9.2 | Visible annotations have a description | `Contents` on everything except links and form fields |
+| 7.18.2 | Trapping network annotations are forbidden | Subtype `TrapNet` |
+| 7.18.3 / 8.9.2.2 | Tab order is defined by structure | `Tabs` equals `S` on pages with annotations |
+| 7.18.4 / 8.10 | Form fields are nested in `Form` elements | Presence of `Form` in the tree when widgets exist |
+| 7.18.5 / 8.9.2.4 | Links have a description; no server-side maps | `Contents`; `IsMap` is not true |
+| 7.15 | Dynamic XFA forms are forbidden | Search for `dynamicRender` with value `required` |
+| 7.11 / 8.14 | Attachments have both file names | `F` and `UF`; `Desc` is advice |
+| 7.20 / 8.2.2 | Reference XObjects are forbidden | `Ref` key on an XObject stream |
 
-Аннотации со снятым флагом видимости и всплывающие окна из проверки исключены — стандарт прямо
-выводит их из-под требований раздела 7.18.
+Hidden annotations and pop-up windows are excluded from checking — the standard
+explicitly removes them from the requirements of clause 7.18.
 
-### Text string и назначения (только UA-2)
+### Text Strings and Destinations (UA-2 Only)
 
-| Пункт | Требование | Как проверяется |
+| Clause | Requirement | How It Is Checked |
 | --- | --- | --- |
-| 8.6 | В человекочитаемых text string нет символов области частного использования | `Alt`, `ActualText`, `E`, `T` элементов структуры; `Contents` и `TU` аннотаций; заголовки закладок; имена конфигураций слоёв |
-| 8.8 | Внутридокументные назначения — structure destinations | `Dest` и действия `GoTo` у аннотаций, закладок и `OpenAction`; сами именованные назначения |
+| 8.6 | Human-readable text strings contain no private-use area characters | `Alt`, `ActualText`, `E`, `T` of structure elements; `Contents` and `TU` of annotations; bookmark titles; layer configuration names |
+| 8.8 | Intra-document destinations are structure destinations | `Dest` and `GoTo` actions on annotations, bookmarks, and `OpenAction`; named destinations themselves |
 
-Оба правила есть только у части 2, и по разным причинам. Область частного использования запрещена
-именно там, где текст читает человек: код `U+E123` значит ровно то, что решил шрифт, который его
-завёл, а вспомогательная техника такого шрифта не видит — и озвучить ей нечего. Проверяются все три
-области: базовая плоскость и обе дополнительные, приходящие суррогатными парами.
+Both rules exist only in Part 2, and for different reasons. The private-use area is forbidden
+precisely where text is read by a person: code `U+E123` means exactly what the font that inserted it
+decided, and assistive technology cannot see that font — there is nothing to speak aloud. All three
+ranges are checked: the basic plane and both supplementary planes arriving via surrogate pairs.
 
-Назначения же в PDF 1.7 просто не умели указывать на элемент структуры, так что требовать этого от
-UA-1 нечего. `GoToR` и `GoToE` ведут в другой файл и под §8.8 не подпадают, а назначение, которое не
-удалось привести к явному массиву, не судится вовсе: правило, которое гадает, выдаёт нарушения
-файлам, у которых их нет.
+Destinations in PDF 1.7 simply could not point to a structure element, so there is nothing to require
+this of UA-1. `GoToR` and `GoToE` lead to another file and do not fall under §8.8, and a destination
+that could not be reduced to an explicit array is not judged at all: a rule that guesses produces violations
+for files that have none.
 
-Второй механизм, который §8.8 разрешает наравне с ссылкой, — ключ `Ref` на исходном элементе
-структуры. Какое содержимое «actionably points» к какому, из файла не выводится, поэтому эта половина
-требования остаётся человеческим суждением.
+The second mechanism that §8.8 permits alongside a link is the `Ref` key on the source structure
+element. Which content "actionably points" to which cannot be inferred from the file, so this half of
+the requirement remains human judgment.
 
-### Пространства имён (только UA-2)
+### Namespaces (UA-2 Only)
 
-По ISO 32000-2 §14.8.6 и ISO/TS 32005:
+Per ISO 32000-2 §14.8.6 and ISO/TS 32005:
 
-- Стандартное пространство имён PDF 2.0 — `http://iso.org/pdf2/ssn`.
-- Стандартное пространство имён PDF 1.7 — `http://iso.org/pdf/ssn`. Оно же по умолчанию: элемент,
-  не назвавший пространства, считается принадлежащим ему.
-- Единственное предметное пространство имён, определённое в PDF 2.0, — MathML,
+- The standard PDF 2.0 namespace is `http://iso.org/pdf2/ssn`.
+- The standard PDF 1.7 namespace is `http://iso.org/pdf/ssn`. It is also the default: an element
+  that did not name a namespace is considered to belong to it.
+- The only domain namespace defined in PDF 2.0 is MathML,
   `http://www.w3.org/1998/Math/MathML`.
 
-Проверяется: элемент со ссылкой `NS` указывает на настоящий словарь пространства имён; это
-пространство объявлено в массиве `Namespaces` корня дерева; у собственного пространства имён есть
-`RoleMapNS`. Если ни один элемент не назвал пространства, выдаётся совет: документ целиком попадает
-в умолчание PDF 1.7 и теряет всё, что PDF 2.0 добавил к набору тегов.
+What is checked: an element with an `NS` reference points to a valid namespace dictionary; that
+namespace is declared in the root tree's `Namespaces` array; a custom namespace has a
+`RoleMapNS`. If no element declares a namespace, advice is issued: the entire document falls into
+the PDF 1.7 default and loses everything PDF 2.0 added to the tag set.
 
-## Что не проверяется и почему
+## What Is Not Checked and Why
 
-Требования, для которых нужен человек:
+Requirements that need a human:
 
-- Семантическая уместность тега. Что абзац размечен как `P`, проверить можно; что этот `P` на самом
-  деле заголовок — нельзя.
-- Логический порядок чтения. Дерево структуры задаёт порядок, но совпадает ли он с тем, как документ
-  читает человек, из файла не следует.
-- Осмысленность альтернативного текста. Наличие `Alt` проверяется; то, что там написано «image1.png»,
-  формально требованию удовлетворяет.
-- Мигание и мерцание (раздел 7.1), передача смысла одним лишь цветом или расположением.
-- Контраст, соответствие WCAG 2.0 по существу.
-- Соответствие вложенных файлов их собственным стандартам доступности (7.11).
+- Semantic appropriateness of a tag. That a paragraph is marked as `P` can be checked; that this `P`
+  is actually a heading cannot.
+- Logical reading order. The structure tree defines an order, but whether it matches how a person reads
+  the document does not follow from the file.
+- Meaningfulness of alternative text. Presence of `Alt` is checked; that it says "image1.png"
+  formally satisfies the requirement.
+- Flashing and flickering (clause 7.1), conveying meaning by color or layout alone.
+- Contrast, WCAG 2.0 conformance in substance.
+- Conformance of embedded files to their own accessibility standards (7.11).
 
-## Рекомендации из руководств
+## Recommendations from Guides
 
-WTPDF 1.0 и Tagged PDF Best Practice Guide — не стандарты, а руководства. Их советы полезны, но
-следование им не является условием соответствия, и валидатор их не проверяет. Наиболее ценные из
-них при построении документа:
+WTPDF 1.0 and the Tagged PDF Best Practice Guide are not standards but guides. Their advice is useful, but
+following them is not a condition of conformance, and the validator does not check them. The most valuable
+recommendations when building a document:
 
-- Размечать колонтитулы как артефакты пагинации, а не как содержимое.
-- Не использовать таблицы для вёрстки: табличная разметка допустима только для настоящих строк и
-  столбцов, и стандарт говорит об этом прямо (7.5).
-- Давать каждому разделу заголовок и строить иерархию заголовков от документа, а не от кегля шрифта.
-- Списки размечать списком только тогда, когда содержимое действительно читается как список.
+- Mark headers and footers as pagination artifacts, not as content.
+- Do not use tables for layout: tabular markup is acceptable only for real rows and
+  columns, and the standard says so directly (7.5).
+- Give each section a heading and build the heading hierarchy from the document, not from font size.
+- Mark content as a list only when it is actually read as a list.
 
-Построчная сверка с текстами обеих частей — в [pdfua-matrix.md](pdfua-matrix.md).
+Line-by-line cross-reference with the text of both parts is in [pdfua-matrix.md](pdfua-matrix.md).
 
-## Well-Tagged PDF и объявления соответствия
+## Well-Tagged PDF and Conformance Declarations
 
-WTPDF 1.0 — не стандарт ISO, а спецификация PDF Association, и заявляет себя не схемой
-идентификации, а механизмом **PDF Declarations**: записью в XMP, которая называет URI стандарта,
-под который документ подписывается.
+WTPDF 1.0 is not an ISO standard but a PDF Association specification, and it presents itself not as an
+identification schema but as a **PDF Declarations** mechanism: an XMP entry that names the URI of the standard
+under which the document is declared to conform.
 
 ```csharp
 using Inkwright.Layout;
 using Inkwright.Metadata;
 
-WellTaggedPdf.Declare(document, WellTaggedLevel.Accessibility, "Наш конвертер");
+WellTaggedPdf.Declare(document, WellTaggedLevel.Accessibility, "Our converter");
 
 foreach (PdfDeclaration declaration in PdfDeclarations.Read(document))
     Console.WriteLine(declaration.ConformsTo);
 ```
 
-Уровней два и они не исключают друг друга: `Reuse` — содержимое надёжно извлекается и
-переформатируется; `Accessibility` — то же плюс всё, что требует ISO 14289-2, поэтому при заявлении
-этого уровня в метаданные попадает и схема идентификации PDF/UA-2.
+There are two levels and they do not exclude each other: `Reuse` — content is reliably extracted and
+reformatted; `Accessibility` — the same plus everything ISO 14289-2 requires, so when this level is declared
+the metadata also receives the PDF/UA-2 identification schema.
 
-Объявление можно сделать про любой сторонний стандарт, не только про WTPDF: `PdfDeclarations.Build`
-принимает произвольный URI и необязательные сведения о том, кто, когда и на каком основании
-заявляет. Список согласованных отраслью объявлений ведёт PDF Association.
+A declaration can be made for any third-party standard, not only WTPDF: `PdfDeclarations.Build`
+accepts an arbitrary URI and optional information about who, when, and on what basis the claim is made.
+PDF Association maintains the list of industry-agreed declarations.
 
-Природа механизма та же, что у всего в этом файле: **объявление — это утверждение автора, а не
-доказательство**. Спецификация говорит об этом прямо в первом же разделе.
+The nature of the mechanism is the same as everything in this file: **a declaration is an author's claim, not
+proof**. The specification states this directly in the very first section.
 
-## Связь с PDF/A
+## Relationship to PDF/A
 
-Профили независимы, и документ может заявлять оба: PDF/A-2a и PDF/A-3a требуют тегирования, что
-покрывает часть требований PDF/UA, но не все. Схемы идентификации разные (`pdfaid` и `pdfuaid`) и
-пишутся обе. См. [pdfa.md](pdfa.md) и [pdfa-matrix.md](pdfa-matrix.md).
+The profiles are independent, and a document may claim both: PDF/A-2a and PDF/A-3a require tagging, which
+covers part of the PDF/UA requirements but not all. The identification schemas differ (`pdfaid` and `pdfuaid`) and
+both are written. See [archival.md](archival.md) and [pdfa-matrix.md](pdfa-matrix.md).

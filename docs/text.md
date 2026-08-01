@@ -1,10 +1,10 @@
-# Текст, шрифты и извлечение
+# Text, Fonts, and Extraction
 
-## Встроенные четырнадцать
+## Built-in Fourteen
 
-Метрики четырнадцати шрифтов, которые обязан знать любой читатель, встроены в библиотеку:
-имена глифов, ширины, кегли, углы наклона и рамки — из опубликованных Adobe метрик, таблицы
-кодировок — из Annex D самой спецификации.
+Metrics for the fourteen fonts every reader must know are built into the library: glyph names,
+widths, point sizes, italic angles, and bounding boxes from published Adobe metrics, and encoding tables
+from Annex D of the specification itself.
 
 ```csharp
 PdfFont helvetica = document.Fonts.Helvetica;
@@ -13,54 +13,51 @@ PdfFont times = document.Fonts.Standard(Standard14Font.TimesBoldItalic);
 double width = helvetica.Measure("Hello", 24);   // 54.672 pt
 ```
 
-`Standard14Font.Find` понимает обычные подстановки: `Arial`, `ArialMT`, `Arial,Bold`,
-`TimesNewRomanPSMT`, а также префикс подмножества вида `ABCDEF+Helvetica`.
+`Standard14Font.Find` understands common aliases: `Arial`, `ArialMT`, `Arial,Bold`,
+`TimesNewRomanPSMT`, and subset prefixes like `ABCDEF+Helvetica`.
 
-Такой документ не встраивает ничего и весит пару килобайт — но для PDF/A не годится: там
-встроенным должно быть всё.
+Such a document embeds nothing and weighs a couple of kilobytes — but it is not suitable for PDF/A:
+everything must be embedded there.
 
-## Встраивание и сабсеттинг
+## Embedding and Subsetting
 
 ```csharp
 PdfFont font = document.Fonts.Embed(@"C:\Windows\Fonts\segoeui.ttf");
 PdfFont? system = document.Fonts.EmbedSystem("Segoe UI", bold: true);
 ```
 
-Встроенный шрифт пишется как составной (`Type0` с кодировкой `Identity-H`): текст кодируется
-индексами глифов, поэтому работает любая письменность, которую покрывает шрифт, а карта `ToUnicode`
-оставляет результат искомым и копируемым.
+An embedded font is written as a composite (`Type0` with `Identity-H` encoding): text is encoded by
+glyph index, so any script the font covers works, and the `ToUnicode` map keeps the result searchable
+and copyable.
 
-Перед сохранением шрифт превращается в подмножество: остаются только использованные глифы и
-компоненты составных глифов, которые на них ссылаются. Индексы глифов при этом не меняются, поэтому
-`CIDToGIDMap` остаётся `Identity` и ничего не приходится перенумеровывать.
+Before save, the font becomes a subset: only used glyphs and components of composite glyphs that
+reference them remain. Glyph indices do not change, so `CIDToGIDMap` stays `Identity` and nothing
+needs renumbering.
 
-Шрифты с очертаниями в Compact Font Format — то есть OpenType с таблицей `CFF ` — сабсеттятся по
-тому же принципу: очертания невостребованных глифов заменяются пустой программой из одного
-`endchar`, а количество и нумерация глифов сохраняются. Так достигается почти вся экономия: вес
-шрифта — это его очертания.
+Fonts with Compact Font Format outlines — OpenType with a `CFF ` table — are subsetted the same way:
+outlines of unused glyphs are replaced with an empty one-instruction `endchar` program, while glyph
+count and numbering are preserved. That captures almost all the savings: font weight is its outlines.
 
-Подпрограммы (subrs) — вторая по весу часть — обрабатываются так же. Каждый оставленный глиф
-обходится по правилам Type 2 charstring, вложенные вызовы прослеживаются, и всё, до чего никто не
-дотянулся, заменяется одним байтом `return`. Количество записей при этом не меняется намеренно:
-номер подпрограммы смещён на величину, зависящую от их количества, так что выбросить одну запись
-значит перенумеровать все следующие.
+Subroutines (subrs) — the second-largest part — are handled the same way. Each kept glyph is walked
+by Type 2 charstring rules, nested calls are traced, and everything unreachable is replaced with a
+single `return` byte. Entry count is intentionally unchanged: subroutine number is offset by the
+entry count, so dropping one entry would renumber all following ones.
 
-Составные глифы разрешаются по-настоящему. Акцентированная буква рисуется как база плюс акцент, и
-составная форма `endchar` называет их кодами стандартной кодировки, а не номерами глифов; коды
-переводятся в имена по таблице приложения B, имена — в глифы по charset (форматы 0, 1 и 2), и части
-добавляются к оставленным. Части могут сами быть составными, поэтому поиск идёт до неподвижной
-точки.
+Composite glyphs are resolved for real. An accented letter is drawn as base plus accent, and a
+composite `endchar` names their standard encoding codes, not glyph numbers; codes map to names via
+Appendix B, names to glyphs via charset (formats 0, 1, and 2), and parts are added to the kept set.
+Parts may themselves be composite, so the search runs to a fixed point.
 
-Ограничение осталось одно: у CID-шрифта локальные подпрограммы принадлежат отдельным словарям
-шрифтов через FDSelect, и они переносятся целиком; глобальные сабсеттятся и там.
+One limitation remains: for a CID font, local subroutines belong to separate font dictionaries via
+FDSelect and are kept in full; global ones are subsetted there too.
 
-Флаг запрета встраивания из таблицы `OS/2` библиотека сообщает
-(`TrueTypeFont.EmbeddingRestricted`), но сама на него не действует: соблюдение лицензии — решение
-вызывающего, а не библиотеки.
+The embedding-restriction flag from the `OS/2` table is reported by the library
+(`TrueTypeFont.EmbeddingRestricted`), but the library does not enforce it: license compliance is the
+caller's decision, not the library's.
 
-## Кодировки
+## Encodings
 
-`FontEncoding` даёт четыре предопределённые кодировки Annex D и умеет накладывать `Differences`:
+`FontEncoding` provides four predefined Annex D encodings and supports `Differences` overlays:
 
 ```csharp
 FontEncoding encoding = FontEncoding.WinAnsi.WithDifferences(differences);
@@ -68,14 +65,13 @@ string? glyph = encoding.GetGlyphName(0xE4);   // "adieresis"
 string? text = encoding.GetText(0xE4);         // "ä"
 ```
 
-`FontEncoding.GlyphToText` понимает и соглашения производителей: `uni0439`, `u20AC`, лигатуры
-`f_i`, варианты `a.sc`.
+`FontEncoding.GlyphToText` also understands vendor conventions: `uni0439`, `u20AC`, ligatures
+`f_i`, variants `a.sc`.
 
-## Извлечение текста
+## Text Extraction
 
-Извлечение проигрывает поток содержимого так же, как это делал бы отрисовщик: положение каждого
-глифа берётся из матриц текста и преобразования, которые действовали в момент рисования, а не
-угадывается по байтам.
+Extraction replays the content stream the way a renderer would: each glyph's position comes from the
+text and transformation matrices active at draw time, not from guessing bytes.
 
 ```csharp
 string text = page.ExtractText();
@@ -86,63 +82,62 @@ foreach (PdfLetter letter in page.ExtractLetters())
 }
 ```
 
-`PdfLetter` несёт текст, начало на базовой линии, ширину, высоту, кегль, имя шрифта и угол базовой
-линии. Работать с буквами, а не с плоской строкой, стоит там, где нужны колонки, таблицы или
-порядок чтения: строку из них собрать всегда можно, обратно — уже нет.
+`PdfLetter` carries text, baseline origin, width, height, point size, font name, and baseline angle.
+Working with letters rather than a flat string is worth it when you need columns, tables, or reading
+order: you can always assemble a string from them, not the other way around.
 
-Понимаются простые и составные шрифты, `ToUnicode`, встроенные CMap, `Differences`, форматы `cmap`
-0, 4, 6 и 12, невидимый текст под сканом (режим 3 пропускается) и содержимое форм XObject,
-вложенных до двенадцати уровней.
+Simple and composite fonts, `ToUnicode`, embedded CMaps, `Differences`, `cmap` formats 0, 4, 6, and
+12, invisible text under scans (mode 3 is skipped), and Form XObject content nested up to twelve levels
+are all understood.
 
-`TextExtractor.Compose` собирает буквы в строки по базовой линии и вставляет пробел там, где
-промежуток шире примерно пятой части кегля.
+`TextExtractor.Compose` groups letters into lines by baseline and inserts a space where the gap is
+wider than roughly one-fifth of the point size.
 
-### Что можно попросить сверх этого
+### Optional Extraction Behavior
 
 ```csharp
 string text = page.ExtractText(new TextExtractionOptions
 {
-    ResolveBidirectional = true,   // арабский и иврит — в логическом порядке
-    SkipHiddenLayers = true,       // пропускать выключенные слои
-    UseLogicalOrder = true,        // порядок чтения по структурному дереву
-    UseActualText = true,          // точная замена из marked-content /ActualText
+    ResolveBidirectional = true,   // Arabic and Hebrew in logical order
+    SkipHiddenLayers = true,       // skip disabled layers
+    UseLogicalOrder = true,        // reading order from structure tree
+    UseActualText = true,          // exact replacement from marked-content /ActualText
 });
 ```
 
-**Двунаправленный текст.** PDF рисует глифы в том порядке, в каком они лежат на странице, поэтому
-арабский и иврит выходят из потока содержимого задом наперёд: последняя буква слова нарисована левее
-всех и читается первой. `Bidi` прогоняет по строке подмножество Unicode Annex #9 и возвращает тот
-порядок, в котором текст был написан, — тот самый, в котором его надо хранить, искать и копировать.
+**Bidirectional text.** PDF draws glyphs in content-stream order, so Arabic and Hebrew come out
+backwards: the last letter of a word is drawn leftmost and read first. `Bidi` runs Unicode Annex #9
+over each line and returns the order in which the text was written — the order in which it should be
+stored, searched, and copied.
 
-Явные управляющие символы вложенности (X1–X10), перестановка комбинирующих знаков (L3) и зеркальные
-глифы (L4) не реализованы: PDF решил все три вопроса ещё до того, как нарисовал глифы.
+Explicit embedding controls (X1–X10), combining-mark reordering (L3), and mirrored glyphs (L4) are
+not implemented: PDF resolved all three before it drew the glyphs.
 
-**Порядок чтения.** В теговом документе структурное дерево говорит, что за чем читается. Без него
-две колонки выходят вперемежку строка за строкой, потому что именно так их и рисовали.
+**Reading order.** In a tagged document, the structure tree says what is read after what. Without it,
+two columns come out interleaved line by line because that is how they were drawn.
 
 ```csharp
 foreach (PdfStructureNode node in document.Structure)
     Console.WriteLine($"{node.Tag}: {node.AlternateText ?? node.Title}");
 ```
 
-Каждая буква несёт `MarkedContentId` — номер размеченной последовательности, в которой её
-нарисовали. Это и связывает глиф со структурным деревом. Глифы, о которых дерево ничего не говорит,
-не выбрасываются: они идут после всех остальных в порядке рисования, потому что нетеговый текст —
-это просто нетеговый текст, а не украшение.
+Each letter carries `MarkedContentId` — the marked-content sequence number in which it was drawn.
+That links the glyph to the structure tree. Glyphs the tree says nothing about are not dropped: they
+follow everything else in draw order, because untagged text is simply untagged text, not decoration.
 
-**ActualText.** При `UseActualText` (по умолчанию `false` у общего text API) глифы внутри `BDC` с
-`/ActualText` заменяются одной точной строкой. Пробелы и переносы не нормализуются; вложенный `Span`
-без собственного MCID наследует внешний. Контекст MCID включает content stream, поэтому одинаковый
-номер внутри страницы и Form XObject не смешивает две последовательности. Markdown-экспорт включает
-этот режим сам.
+**ActualText.** With `UseActualText` (default `false` for the general text API), glyphs inside `BDC`
+with `/ActualText` are replaced by one exact string. Spaces and line breaks are not normalized; a
+nested `Span` without its own MCID inherits the outer one. MCID context includes the content stream,
+so the same number inside a page and a Form XObject does not mix two sequences. Markdown export enables
+this mode automatically.
 
-## Предопределённые CMap: пакет Inkwright.Cjk
+## Predefined CMaps: Inkwright.Cjk Package
 
-Таблица 116 ISO 32000-2 перечисляет кодировки, которые Adobe опубликовала отдельно, — их в
-спецификации нет. (В ISO 32000-1:2008 тот же список шёл под номером 118; в PDF 2.0 под 118 лежат
-дополнительные записи словаря потока CMap.)
-Ядро их не носит: это больше мегабайта таблиц. Пакет `Inkwright.Cjk` носит все 168 в компактном
-двоичном виде.
+ISO 32000-2 Table 116 lists encodings Adobe published separately — they are not in the specification.
+(In ISO 32000-1:2008 the same list was Table 118; in PDF 2.0, 118 holds additional CMap stream
+dictionary entries.)
+The core does not carry them: that is more than a megabyte of tables. The `Inkwright.Cjk` package
+carries all 168 in compact binary form.
 
 ```csharp
 CjkCMaps.Register();
@@ -151,40 +146,40 @@ using var document = PdfDocument.Load("japanese.pdf");
 string text = document.Pages[0].ExtractText();
 ```
 
-После регистрации работает третий способ §9.10.2 целиком: код → CID по настоящей карте кодировки,
-CID → текст по карте набора символов `<Registry>-<Ordering>-UCS2`. Это то, что позволяет прочитать
-японский, китайский или корейский документ, у шрифта которого нет `ToUnicode` вовсе.
+After registration, the third method of §9.10.2 works fully: code → CID via the real encoding map,
+CID → text via the character collection map `<Registry>-<Ordering>-UCS2`. That is what lets you read
+a Japanese, Chinese, or Korean document whose font has no `ToUnicode` at all.
 
-Без пакета имена `Uni*` по-прежнему разбираются как двухбайтовая identity: кодовое пространство
-получается верным, но CID совпадают с самими кодами.
+Without the package, `Uni*` names are still parsed as two-byte identity: the code space is correct,
+but CIDs equal the codes themselves.
 
-Набор покрывает Adobe-GB1, Adobe-CNS1, Adobe-Japan1 и Adobe-Korea1, включая UTF16-варианты из
-PDF 2.0. Коллекции Adobe-KR (PDF 2.0) в наборе нет.
+The set covers Adobe-GB1, Adobe-CNS1, Adobe-Japan1, and Adobe-Korea1, including UTF16 variants from
+PDF 2.0. Adobe-KR collections (PDF 2.0) are not in the set.
 
-## Поиск
+## Search
 
-По умолчанию поиск ведёт себя как строка поиска в просмотрщике, а не как побайтовое сравнение:
+By default, search behaves like a viewer's find box, not byte-by-byte comparison:
 
 ```csharp
-IReadOnlyList<PdfTextMatch> matches = page.FindText("resume");     // найдёт «résumé»
+IReadOnlyList<PdfTextMatch> matches = page.FindText("resume");     // finds "résumé"
 IReadOnlyList<PdfTextMatch> exact = page.FindText("resume", TextSearchOptions.Exact);
 ```
 
-- **Диакритика** игнорируется — но только пока её нет в самом запросе: кто набрал акценты, тот их и
-  имел в виду. Знаки, меняющие смысл, а не начертание (озвончение каны, вирамы), не отбрасываются.
-- **Лигатуры** читаются как буквы, из которых состоят: `find` находит напечатанное `ﬁnd`.
-- **Перенос** через дефис в конце строки склеивается: `hyphenated` находится, даже если напечатано
-  `hyphen-` и `ated` на следующей строке. Дефис в середине строки остаётся дефисом — он соединяет
-  составное слово, а не разрывает одно.
-- **Типографские кавычки** приравниваются к обычным, дроби ¼ ½ ¾ — к записи через косую черту.
-- `WholeWords` требует, чтобы фраза стояла отдельным словом.
+- **Diacritics** are ignored — but only when they are not in the query itself: if you typed accents,
+  you meant them. Marks that change meaning, not shape (kana voicing, viramas), are not stripped.
+- **Ligatures** are read as the letters they consist of: `find` matches printed `ﬁnd`.
+- **Hyphenation** across a line break is joined: `hyphenated` is found even when printed as `hyphen-`
+  and `ated` on the next line. A hyphen mid-line stays a hyphen — it joins a compound word, not
+  split one.
+- **Typographic quotes** match straight quotes; fractions ¼ ½ ¾ match slash notation.
+- `WholeWords` requires the phrase to stand as its own word.
 
-Совпадение всегда возвращает то, что напечатано на странице, и рамки по строкам, которые оно
-занимает, — то есть ровно то, что нужно подсветке.
+A match always returns what is printed on the page and bounding boxes per line it occupies — exactly
+what highlighting needs.
 
-### Насколько этому можно верить
+### How Much to Trust This
 
-Сверка идёт против PdfPig на выборке реальных файлов: средняя схожесть текста не ниже 0.90, а общее
-число извлечённых символов расходится не более чем на 5 %. Согласие с независимой реализацией на
-сотнях документов — единственное доказательство, что кодировки, ширины и матрицы обрабатываются
-верно; фикстура, написанная той же рукой, что и извлекатель, не доказывает ничего.
+Validation runs against PdfPig on a sample of real files: average text similarity is at least 0.90,
+and total extracted character count differs by no more than 5%. Agreement with an independent
+implementation on hundreds of documents is the only proof that encodings, widths, and matrices are
+handled correctly; a fixture written by the same hand as the extractor proves nothing.

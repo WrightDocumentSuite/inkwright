@@ -1,113 +1,106 @@
-# Матрица соответствия ISO 14289 (PDF/UA)
+# ISO 14289 (PDF/UA) Conformance Matrix
 
-Построчная сверка библиотеки с нормативными текстами ISO 14289-1:2014 и ISO 14289-2:2024, плюс
-пространства имён структуры по ISO/TS 32005.
+Line-by-line verification of the library against the normative texts of ISO 14289-1:2014 and ISO 14289-2:2024, plus structure namespaces per ISO/TS 32005.
 
-Столбцы «UA-1» и «UA-2» — номера пунктов. Часть 1 излагает требования к формату файла в разделе 7,
-часть 2 — в разделе 8; там, где формулировки расходятся по существу, различие описано в строке.
+The "UA-1" and "UA-2" columns list clause numbers. Part 1 states file-format requirements in Section 7; Part 2 — in Section 8; where the wording differs materially, the difference is described in the row.
 
-Обозначения в столбце «состояние»:
+Legend for the "Status" column:
 
-| Знак | Смысл |
+| Symbol | Meaning |
 | --- | --- |
-| В | валидатор проверяет: нарушение в файле будет найдено |
-| Г | генератор ставит: `PdfUaProfile.Declare` пишет это в документ |
-| ГВ | и то, и другое |
-| С | выдаётся как совет, потому что стандарт формулирует через «следует» |
-| Ч | требует человеческого суждения; проверить из файла нельзя, в строке сказано почему |
-| — | не проверяется по другой причине, названной в строке |
+| V | Validator checks: a violation in the file will be found |
+| G | Generator sets: `PdfUaProfile.Declare` writes this into the document |
+| GV | Both |
+| A | Reported as advisory because the standard uses "should" |
+| H | Requires human judgment; cannot be verified from the file; the row explains why |
+| — | Not checked for another reason stated in the row |
 
-Правила живут в `src/Inkwright.Layout/PdfUa/`, по файлу на группу требований.
+Rules live in `src/Inkwright.Layout/PdfUa/`, one file per requirement group.
 
-## Идентификация и документ в целом
+## Identification and document as a whole
 
-| UA-1 | UA-2 | Требование | Состояние | Замечание |
+| UA-1 | UA-2 | Requirement | Status | Notes |
 | --- | --- | --- | --- | --- |
-| 5 | 5 | Схема идентификации `pdfuaid` в XMP | ГВ | `part` сверяется с частью; для UA-2 пишется и проверяется обязательный `rev = 2024` |
-| 7.1 | 8.2 | Всё реальное содержимое размечено | Ч | проверяется наличие дерева и `Marked`; полнота разметки — суждение |
-| 7.1 | 8.2 | Артефакты не в дереве структуры | Ч | отличить артефакт от содержимого может только человек |
-| 7.1 | 8.2 | `Suspects` равно лжи | ГВ | |
-| 7.1 | 8.2.2 | Нестандартные теги отображаются на стандартные | В | цепочка `RoleMap` прослеживается до стандартного типа, с защитой от петли |
-| 7.1 | 8.2.2 | Стандартные теги не переопределяются | В | |
-| 7.1 | 8.2 | Мерцание и мигание не используются | Ч | из файла не следует |
-| 7.1 | 8.2 | Смысл не передаётся только цветом или расположением | Ч | из файла не следует |
-| 7.1 | 8.11.1 | `dc:title` в метаданных | ГВ | |
-| 7.1 | 8.11.2 | `ViewerPreferences` с `DisplayDocTitle` | ГВ | |
-| 7.2 | 8.4.5 | Объявлен естественный язык | В | `Lang` в каталоге либо на всех корнях структуры |
-| 7.2 | 8.4.5 | Смены языка объявлены | Ч | требует понимания текста |
-| 7.2 | 8.4 | Коды символов отображаются в Unicode | — | покрывается проверкой шрифтов PDF/A |
-| 7.2 | 8.4.4 | Растягиваемые символы размечены `ActualText` | Ч | |
-| н/п | 8.6 | В человекочитаемых text string нет символов из области частного использования | В | только UA-2; проверяются `Alt`, `ActualText`, `E`, `T` элементов структуры, `Contents` и `TU` аннотаций, заголовки закладок, имена конфигураций слоёв. Все три области: BMP и обе дополнительные плоскости |
-| 7.16 | 8.1 | Шифрование не запрещает доступ вспомогательной технике | В | десятый бит `P` |
+| 5 | 5 | `pdfuaid` identification schema in XMP | GV | `part` is compared against the part; for UA-2 the required `rev = 2024` is written and checked |
+| 7.1 | 8.2 | All real content is tagged | H | presence of tree and `Marked` is checked; completeness of tagging requires human judgment |
+| 7.1 | 8.2 | Artifacts are not in the structure tree | H | only a human can distinguish artifact from content |
+| 7.1 | 8.2 | `Suspects` is false | GV | |
+| 7.1 | 8.2.2 | Non-standard tags map to standard ones | V | `RoleMap` chain is traced to a standard type, with loop protection |
+| 7.1 | 8.2.2 | Standard tags are not redefined | V | |
+| 7.1 | 8.2 | No flashing or blinking | H | not inferable from the file |
+| 7.1 | 8.2 | Meaning is not conveyed by color or layout alone | H | not inferable from the file |
+| 7.1 | 8.11.1 | `dc:title` in metadata | GV | |
+| 7.1 | 8.11.2 | `ViewerPreferences` with `DisplayDocTitle` | GV | |
+| 7.2 | 8.4.5 | Natural language is declared | V | `Lang` in catalog or on all structure roots |
+| 7.2 | 8.4.5 | Language changes are declared | H | requires understanding the text |
+| 7.2 | 8.4 | Character codes map to Unicode | — | covered by PDF/A font checks |
+| 7.2 | 8.4.4 | Stretched characters tagged with `ActualText` | H | |
+| n/a | 8.6 | Human-readable text strings contain no private-use characters | V | UA-2 only; `Alt`, `ActualText`, `E`, `T` of structure elements, annotation `Contents` and `TU`, bookmark titles, and layer configuration names are checked. All three ranges: BMP and both supplementary planes |
+| 7.16 | 8.1 | Encryption does not block assistive technology access | V | tenth bit of `P` |
 
-## Дерево структуры
+## Structure tree
 
-| UA-1 | UA-2 | Требование | Состояние | Замечание |
+| UA-1 | UA-2 | Requirement | Status | Notes |
 | --- | --- | --- | --- | --- |
-| 7.3 | 8.5 | У иллюстраций есть `Alt` или `ActualText` | В | осмысленность текста — суждение |
-| 7.3 | 8.5 | Подпись к иллюстрации размечена `Caption` | Ч | |
-| 7.4.1 | 8.2.5.2 | Заголовки размечены тегами заголовков | Ч | что является заголовком — суждение |
-| 7.4.2 | 8.2.5.2 | Первый заголовок — `H1` | В | |
-| 7.4.2 | 8.2.5.2 | Нисходящая последовательность не пропускает уровень | В | `H1 H2 H3` можно, `H1 H3` нельзя |
-| 7.4.3 | 8.2.5.2 | Уровни выше шестого пишутся `H` плюс арабские цифры без разделителей | В | разбор тега отвергает всё, кроме цифр |
-| 7.4.4 | 8.2.5.2 | Документ сильно или слабо структурирован, но не оба сразу | В | совместное присутствие `H` и нумерованных |
-| 7.4.4 | 8.2.5.2 | У узла не более одного дочернего `H` | В | |
-| 7.5 | 8.2.5.9 | Заголовочные ячейки размечены `TH` | С | отсутствие `TH` в таблице — совет |
-| 7.5 | 8.2.5.9 | У `TH` есть `Scope`, если структура не выводится из `Headers` | В | принимается `Scope` либо `Headers` |
-| 7.5 | 8.2.5.9 | Табличная разметка только для настоящих строк и столбцов | Ч | вёрстку таблицей от таблицы не отличить |
-| 7.6 | 8.2.5.8 | Элементы списка размечены `LI` | В | |
-| 7.6 | 8.2.5.8 | У упорядоченного списка есть `ListNumbering` | В | упорядоченность выводится из наличия `Lbl` |
-| 7.7 | 8.5 | Формулы обёрнуты в `Formula` с `Alt` | В | наличие обёртки для всех формул — суждение |
-| 7.8 | 8.3 | Колонтитулы — артефакты пагинации | Ч | |
-| 7.9 | 8.2.5.11 | Сноски размечены `Note` с уникальным `ID` | В | уникальность проверяется |
-| 7.12 | 8.12.4 | Нити статей отражают порядок чтения | Ч | |
+| 7.3 | 8.5 | Illustrations have `Alt` or `ActualText` | V | presence is checked; meaningfulness of the text requires human judgment |
+| 7.3 | 8.5 | Illustration caption tagged `Caption` | H | |
+| 7.4.1 | 8.2.5.2 | Headings tagged with heading tags | H | what counts as a heading requires human judgment |
+| 7.4.2 | 8.2.5.2 | First heading is `H1` | V | |
+| 7.4.2 | 8.2.5.2 | Descending sequence does not skip a level | V | `H1 H2 H3` allowed, `H1 H3` not |
+| 7.4.3 | 8.2.5.2 | Levels above six written as `H` plus Arabic digits without separators | V | tag parsing rejects anything except digits |
+| 7.4.4 | 8.2.5.2 | Document is strongly or weakly structured, not both | V | simultaneous presence of `H` and numbered headings |
+| 7.4.4 | 8.2.5.2 | Node has at most one child `H` | V | |
+| 7.5 | 8.2.5.9 | Header cells tagged `TH` | A | absence of `TH` in a table is advisory |
+| 7.5 | 8.2.5.9 | `TH` has `Scope` when structure is not inferred from `Headers` | V | `Scope` or `Headers` accepted |
+| 7.5 | 8.2.5.9 | Table markup only for real rows and columns | H | table layout cannot be distinguished from a real table |
+| 7.6 | 8.2.5.8 | List items tagged `LI` | V | |
+| 7.6 | 8.2.5.8 | Ordered list has `ListNumbering` | V | order inferred from presence of `Lbl` |
+| 7.7 | 8.5 | Formulas wrapped in `Formula` with `Alt` | V | presence is checked; whether all formulas are wrapped requires human judgment |
+| 7.8 | 8.3 | Headers and footers are pagination artifacts | H | |
+| 7.9 | 8.2.5.11 | Footnotes tagged `Note` with unique `ID` | V | uniqueness is checked |
+| 7.12 | 8.12.4 | Article threads reflect reading order | H | |
 
-## Взаимодействие
+## Interaction
 
-| UA-1 | UA-2 | Требование | Состояние | Замечание |
+| UA-1 | UA-2 | Requirement | Status | Notes |
 | --- | --- | --- | --- | --- |
-| н/п | 8.8 | Внутридокументные назначения — это structure destinations | ГВ | только UA-2: в PDF 1.7 их не существует. Проверяются `Dest` и действия `GoTo` у аннотаций, закладок и `OpenAction`, а также сами именованные назначения; `GoToR` и `GoToE` ведут наружу и не судятся. Компоновщик в теговой секции ставит закладке элемент структуры, а не страницу |
-| н/п | 8.8 | Источник ссылается на цель через `Ref` элемента структуры | Ч | второй из двух допустимых механизмов; какое содержимое «actionably points» к какому — суждение |
-| 7.10 | 8.7 | У конфигураций слоёв есть имена | В | требуется при наличии `Configs` |
-| 7.10 | 8.7 | Ключ `AS` не встречается | В | |
-| 7.11 | 8.14 | У вложений есть `F` и `UF` | В | |
-| 7.11 | 8.14 | У вложений есть `Desc` | С | стандарт говорит «следует» |
-| 7.11 | 8.14 | Вложение доступно само по себе | Ч | зависит от его формата |
-| 7.13 | 8.10 | Внешний вид подписи отвечает требованиям к содержимому | Ч | |
-| 7.14 | 8.10 | Неинтерактивные формы размечены атрибутами `PrintField` | Ч | |
-| 7.15 | н/п | Динамические формы XFA запрещены | В | ищется `dynamicRender` со значением `required`; в UA-2 XFA запрещён целиком |
-| 7.17 | 8.12.2 | У длинного документа есть оглавление | С | совет при десяти и более страницах |
-| 7.17 | 8.12.3 | Метки страниц семантически уместны | Ч | |
-| 7.18.1 | 8.9.2 | У видимой аннотации есть описание | В | скрытые, вне области и всплывающие исключены |
-| 7.18.2 | 8.9.2 | `TrapNet` запрещён | В | |
-| 7.18.3 | 8.9.2.2 | На страницах с аннотациями `Tabs` равно `S` | В | |
-| 7.18.4 | 8.10 | Виджеты вложены в элементы `Form` | В | проверяется наличие `Form` при наличии виджетов |
-| 7.18.5 | 8.9.2.4 | У ссылок есть описание | В | |
-| 7.18.5 | 8.9.2.4 | `IsMap` не истина | В | |
-| 7.18.6 | 8.9 | У медиаклипа есть `CT` и `Alt` | — | медиа библиотека не создаёт |
-| 7.18.8 | 8.3 | `PrinterMark` считается артефактом | — | библиотека их не создаёт |
-| 7.19 | 8.13 | Скрипты объявляют изменения доступным образом | Ч | |
-| 7.20 | 8.2.2 | Ссылочные объекты формы запрещены | В | ключ `Ref` в потоке |
-| 7.21 | 8.4 | Шрифты встроены и отображаются в Unicode | — | покрывается проверкой шрифтов PDF/A |
+| n/a | 8.8 | Intra-document destinations are structure destinations | GV | UA-2 only: they do not exist in PDF 1.7. `Dest` and `GoTo` actions on annotations, bookmarks, and `OpenAction` are checked, as are named destinations themselves; `GoToR` and `GoToE` lead outside and are not judged. The layout engine assigns bookmarks a structure element in the tagged section, not a page |
+| n/a | 8.8 | Source references target via structure element `Ref` | H | second of two permitted mechanisms; which content "actionably points" to which target requires human judgment |
+| 7.10 | 8.7 | Layer configurations have names | V | required when `Configs` is present |
+| 7.10 | 8.7 | Key `AS` is not present | V | |
+| 7.11 | 8.14 | Attachments have `F` and `UF` | V | |
+| 7.11 | 8.14 | Attachments have `Desc` | A | the standard says "should" |
+| 7.11 | 8.14 | Attachment is accessible on its own | H | depends on its format |
+| 7.13 | 8.10 | Signature appearance meets content requirements | H | |
+| 7.14 | 8.10 | Non-interactive forms tagged with `PrintField` attributes | H | |
+| 7.15 | n/a | Dynamic XFA forms forbidden | V | looks for `dynamicRender` with value `required`; in UA-2 XFA is forbidden entirely |
+| 7.17 | 8.12.2 | Long document has a table of contents | A | advisory at ten or more pages |
+| 7.17 | 8.12.3 | Page labels are semantically appropriate | H | |
+| 7.18.1 | 8.9.2 | Visible annotation has a description | V | hidden, out-of-view, and popup excluded |
+| 7.18.2 | 8.9.2 | `TrapNet` forbidden | V | |
+| 7.18.3 | 8.9.2.2 | On pages with annotations `Tabs` equals `S` | V | |
+| 7.18.4 | 8.10 | Widgets nested in `Form` elements | V | presence of `Form` checked when widgets exist |
+| 7.18.5 | 8.9.2.4 | Links have a description | V | |
+| 7.18.5 | 8.9.2.4 | `IsMap` is not true | V | |
+| 7.18.6 | 8.9 | Media clip has `CT` and `Alt` | — | the library does not create media |
+| 7.18.8 | 8.3 | `PrinterMark` treated as artifact | — | the library does not create them |
+| 7.19 | 8.13 | Scripts declare changes accessibly | H | |
+| 7.20 | 8.2.2 | Form reference objects forbidden | V | `Ref` key in stream |
+| 7.21 | 8.4 | Fonts embedded and displayed in Unicode | — | covered by PDF/A font checks |
 
-## Пространства имён структуры (UA-2)
+## Structure namespaces (UA-2)
 
-По ISO 32000-2 §14.8.6 и ISO/TS 32005.
+Per ISO 32000-2 §14.8.6 and ISO/TS 32005.
 
-| Требование | Состояние | Замечание |
+| Requirement | Status | Notes |
 | --- | --- | --- |
-| Элемент со ссылкой `NS` указывает на словарь пространства имён | В | |
-| Пространство объявлено в массиве `Namespaces` корня дерева | В | |
-| У собственного пространства имён есть `RoleMapNS` | В | стандартные и MathML исключены |
-| Ни один элемент не назвал пространства | С | документ целиком попадает в умолчание PDF 1.7 |
+| Element with `NS` reference points to a namespace dictionary | V | |
+| Namespace declared in root tree `Namespaces` array | V | |
+| Custom namespace has `RoleMapNS` | V | standard and MathML excluded |
+| No element names a namespace | A | the entire document falls under the PDF 1.7 default namespace |
 
-## Что означает столбец «Ч»
+## What the "H" column means
 
-Строк с пометкой «требует человеческого суждения» в этой матрице больше, чем в матрице PDF/A, и это
-не пробел в реализации, а свойство предмета. PDF/A спрашивает, что лежит в файле; PDF/UA спрашивает,
-понятен ли файл человеку, который его не видит. Второй вопрос программе недоступен, и валидатор,
-который делает вид, что отвечает на него, вреден: он выдаёт справку о доступности документу, с
-которым никто не сможет работать.
+Rows marked "requires human judgment" outnumber those in the PDF/A matrix, and that is not an implementation gap but a property of the subject. PDF/A asks what is in the file; PDF/UA asks whether the file is understandable to someone who cannot see it. The second question is inaccessible to software, and a validator that pretends to answer it is harmful: it certifies accessibility for a document no one can actually use.
 
-Поэтому правило: документ, прошедший проверку, не является тем самым доступным. Документ, её не
-прошедший, точно недоступен.
+Therefore the rule: a document that passes validation is not necessarily accessible. A document that fails is definitely not accessible.

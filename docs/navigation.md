@@ -1,99 +1,79 @@
-# Навигация: закладки, назначения, output intents
+# Navigation: bookmarks, destinations, output intents
 
-## Закладки
+## Bookmarks
 
-Дерево закладок (§12.3.3) читается и правится через модель документа. `document.Outline` возвращает
-`null`, если закладок нет; `PdfOutline.OpenOrCreate` заводит пустое дерево, к которому можно
-добавлять.
+The bookmark tree (§12.3.3) is read and edited through the document model. `document.Outline` returns `null` if there are no bookmarks; `PdfOutline.OpenOrCreate` creates an empty tree you can add to.
 
 ```csharp
 using PdfDocument document = PdfDocument.Load("book.pdf");
 
 PdfOutline outline = PdfOutline.OpenOrCreate(document);
-PdfOutlineItem chapter = outline.Add("Глава 1", PdfDestination.FitPage(document.Pages[0]));
-chapter.Add("Раздел 1.1", PdfDestination.XyzLocation(document.Pages[1], top: 800));
+PdfOutlineItem chapter = outline.Add("Chapter 1", PdfDestination.FitPage(document.Pages[0]));
+chapter.Add("Section 1.1", PdfDestination.XyzLocation(document.Pages[1], top: 800));
 chapter.SetColor(PdfColor.Rgb(0.1f, 0.1f, 0.6f));
 chapter.SetStyle(italic: false, bold: true);
 
 document.SaveIncremental("book-bookmarked.pdf");
 ```
 
-Двусвязный список `/First`–`/Last`–`/Next`–`/Prev` и знаковый счётчик `/Count` (положительный —
-раскрыт, отрицательный — свёрнут) пересобираются от корня при каждом изменении, как бы глубоко в
-дереве оно ни было: раздел, добавленный на третьем уровне, поправит итоги всех предков над ним.
+The doubly linked list `/First`–`/Last`–`/Next`–`/Prev` and signed counter `/Count` (positive—expanded, negative—collapsed) are rebuilt from the root on every change, no matter how deep in the tree the change was: a section added at the third level fixes totals for all ancestors above it.
 
-Удаление уносит с собой поддерево и чинит цепочку соседей:
+Deletion removes the subtree and repairs the sibling chain:
 
 ```csharp
-outline.Remove(chapter);          // вместе со всеми разделами под ним
+outline.Remove(chapter);          // together with all sections under it
 ```
 
-## Назначения
+## Destinations
 
-`PdfDestination` — независимое от документа значение: одно и то же назначение можно отдать закладке,
-ссылке или действию при открытии. Оно превращается в массив только при записи, и страница получает
-объектный номер тогда же, если модель ещё его не присвоила.
+`PdfDestination` is a document-independent value: the same destination can go to a bookmark, link, or open action. It becomes an array only when written, and the page gets an object number then if the model has not assigned one yet.
 
-| Фабрика | Что делает |
+| Factory | What it does |
 | --- | --- |
-| `FitPage(page)` | вписать всю страницу (`/Fit`) |
-| `XyzLocation(page, left, top, zoom)` | точное положение и масштаб (`/XYZ`); `null` — оставить как есть |
-| `FitWidth(page, top)` | по ширине, заданная строка вверху (`/FitH`) |
-| `FitHeight(page, left)` | по высоте, заданный столбец слева (`/FitV`) |
+| `FitPage(page)` | fit entire page (`/Fit`) |
+| `XyzLocation(page, left, top, zoom)` | exact position and scale (`/XYZ`); `null`—leave unchanged |
+| `FitWidth(page, top)` | fit width, given row at top (`/FitH`) |
+| `FitHeight(page, left)` | fit height, given column at left (`/FitV`) |
 
 ### Structure destinations (PDF 2.0)
 
-Назначение может указывать не на страницу, а на элемент структуры (§12.3.2.3): читатель сам находит
-страницу по первому содержимому элемента, поэтому ссылка переживает переверстку, сдвинувшую текст.
-Первый элемент массива — косвенная ссылка на элемент структуры, а не на страницу.
+A destination can point not to a page but to a structure element (§12.3.2.3): the reader finds the page from the element’s first content, so the link survives reflow that moved text. The first array element is an indirect reference to a structure element, not a page.
 
 ```csharp
-PdfStructureNode heading = document.Structure[0];      // прочитан как косвенный объект
+PdfStructureNode heading = document.Structure[0];      // read as indirect object
 item.SetStructureDestination(PdfDestination.ToStructureElement(heading, top: 750));
 ```
 
-`SetStructureDestination` пишет обычную запись `/Dest`, но первым элементом её массива служит ссылка
-на structure element вместо страницы. Документ при этом продвигается до PDF 2.0. Ключ `/SD`
-применим только внутри действия GoTo и не является ключом словаря закладки. Важно для PDF/UA-2.
+`SetStructureDestination` writes a normal `/Dest` entry, but the first element of its array is a reference to a structure element instead of a page. The document is upgraded to PDF 2.0 in the process. The `/SD` key applies only inside a GoTo action and is not a bookmark dictionary key. Important for PDF/UA-2.
 
-## Закладки из компоновщика
+## Bookmarks from the layout engine
 
-`Inkwright.Layout` умеет строить дерево закладок из содержимого: декоратор `Bookmark` не меняет
-раскладку, но, когда содержимое ложится на страницу, запоминает, куда именно, и после отрисовки это
-превращается в `/Outlines`. Заголовок и его закладка не разъедутся, как бы ни легли страницы.
+`Inkwright.Layout` can build a bookmark tree from content: the `Bookmark` decorator does not change layout, but when content is placed on a page it remembers where, and after rendering that becomes `/Outlines`. The heading and its bookmark will not drift apart no matter how pages fall.
 
 ```csharp
 Report.Create()
     .Page(page => page.Content().Column(column =>
     {
-        column.Item().Bookmark("Глава 1").Text("Глава 1", TextStyle.Default.FontSize(18).Bold());
-        column.Item().Bookmark("Раздел 1.1", level: 1).Text("Раздел 1.1");
-        column.Item().Bookmark("Глава 2").Text("Глава 2", TextStyle.Default.FontSize(18).Bold());
+        column.Item().Bookmark("Chapter 1").Text("Chapter 1", TextStyle.Default.FontSize(18).Bold());
+        column.Item().Bookmark("Section 1.1", level: 1).Text("Section 1.1");
+        column.Item().Bookmark("Chapter 2").Text("Chapter 2", TextStyle.Default.FontSize(18).Bold());
     }))
     .Save("report.pdf");
 ```
 
-`level` задаёт вложенность: закладка, объявившая уровень глубже, чем сейчас доходит дерево, цепляется
-к самой глубокой имеющейся записи.
+`level` sets nesting: a bookmark whose level is deeper than the current tree depth attaches under the deepest existing entry.
 
-В теговой секции (`page.Tagged()`) закладка получает не страницу, а **structure destination**: она
-указывает на элемент структуры, который создало её содержимое, а если содержимое ничего не создало —
-на объемлющий узел. Этого требует ISO 14289-2 §8.8 от любого назначения внутри документа, и без
-этого отчёт не прошёл бы собственный валидатор PDF/UA-2. Нетеговая секция структуры не имеет, и её
-закладки остаются назначениями на страницу.
+In a tagged section (`page.Tagged()`) a bookmark gets not a page but a **structure destination**: it points to the structure element its content created, or to the enclosing node if content created none. ISO 14289-2 §8.8 requires this for any destination inside the document, and without it the report would fail its own PDF/UA-2 validator. An untagged section has no structure, and its bookmarks remain page destinations.
 
 ## Output intents
 
-Характеристику устройства, под которое готовили документ (§14.11.5), — встроенный ICC-профиль — можно
-добавить и на весь документ, и, как позволяет PDF 2.0, на отдельную страницу: это нужно файлу,
-собранному из страниц под разные устройства.
+The device characteristics the document was prepared for (§14.11.5)—an embedded ICC profile—can be added for the whole document and, as PDF 2.0 allows, for an individual page: useful for a file assembled from pages prepared for different devices.
 
 ```csharp
 document.AddOutputIntent(PdfOutputIntent.SRgb());
 document.Pages[0].AddOutputIntent(PdfOutputIntent.FromIccProfile(cmykProfile, components: 4, "GTS_PDFX", "Press"));
 ```
 
-Добавление page-level output intent продвигает версию документа до PDF 2.0.
+Adding a page-level output intent upgrades the document version to PDF 2.0.
 
-`PdfOutputIntent.SRgb()` берёт профиль, который библиотека генерирует сама; `FromIccProfile` встраивает
-любой другой.
+`PdfOutputIntent.SRgb()` uses a profile the library generates itself; `FromIccProfile` embeds any other.

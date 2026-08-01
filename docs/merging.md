@@ -1,6 +1,6 @@
-# Слияние и разбор
+# Merging and Splitting
 
-## Соединить и разрезать
+## Join and Split
 
 ```csharp
 using PdfDocument merged = PdfDocument.Merge(first, second, third);
@@ -9,49 +9,39 @@ merged.Save("book.pdf");
 using PdfDocument chapter = book.ExtractPages(0, 1, 2, 7);
 ```
 
-Исходные документы не меняются: страницы копируются, а не переносятся.
+Source documents are not modified: pages are copied, not moved.
 
-## Что переезжает кроме страниц
+## What Moves Besides Pages
 
-Скопировать страницы — простая половина слияния. Закладки, которые на них ведут, имена, по которым
-на них ссылаются другие файлы, поля форм, чьи виджеты на них лежат, и структурное дерево, которое
-делает их читаемыми, — всё это живёт в каталоге, и слияние, забывшее о них, даёт файл, который
-выглядит правильно, а ведёт себя как стопка картинок.
+Copying pages is the easy half of merging. Bookmarks that point to them, names other files use to reference them, form fields whose widgets sit on them, and the structure tree that makes them accessible — all of that lives in the catalog, and a merge that forgets them yields a file that looks right but behaves like a stack of pictures.
 
-| Что | Как переносится |
+| What | How it is transferred |
 | --- | --- |
-| Закладки | сохраняются те, что ещё куда-то ведут; узел без своего назначения остаётся, если остался хоть один потомок |
-| Именованные назначения | конфликтующие имена переименовываются, ссылки на них перенаправляются |
-| Поля AcroForm | конфликтующие полные имена переименовываются (§12.7.3.2); `/DR`, `/DA`, `/Q` и `/CO` сливаются |
-| Структурное дерево | ключи `/StructParents` и `/StructParent` сдвигаются, `/ParentTree` пересобирается (§14.7.4.4) |
-| Метки страниц | диапазоны сдвигаются туда, куда попали страницы |
-| Вложения | конфликтующие имена переименовываются |
-| Слои | группы и список выключенных переносятся, иначе скрытое стало бы видимым |
+| Bookmarks | kept if they still lead somewhere; a node without its own destination remains if at least one child remains |
+| Named destinations | conflicting names are renamed; references to them are redirected |
+| AcroForm fields | conflicting full names are renamed (§12.7.3.2); `/DR`, `/DA`, `/Q`, and `/CO` are merged |
+| Structure tree | `/StructParents` and `/StructParent` keys are shifted; `/ParentTree` is rebuilt (§14.7.4.4) |
+| Page labels | ranges shift to wherever the pages landed |
+| Attachments | conflicting names are renamed |
+| Layers | groups and the off list are transferred; otherwise hidden content would become visible |
 
-Что уже было в целевом документе, то и остаётся: имя ресурса, которое цель уже занимала, сохраняет
-прежний смысл, иначе её собственные поля перерисовались бы чужими шрифтами.
+What the target document already had stays as it was: a resource name the target already owned keeps its previous meaning; otherwise its own fields would redraw with someone else's fonts.
 
-## Почему закладка теряет имя
+## Why a Bookmark Loses Its Name
 
-Закладка, которая вела на назначение по имени, после слияния указывает прямо на страницу. Так
-надёжнее: имя могло быть переименовано из-за конфликта, а страница — это страница.
+After merging, a bookmark that pointed to a named destination instead points directly at the page. That is more reliable: the name may have been renamed due to a conflict, but a page is a page.
 
-## Метки страниц при слиянии
+## Page Labels During Merge
 
-Документ без своих меток всё равно получает один диапазон. Без этого римские цифры предыдущего
-документа перетекли бы на страницы, которые их не просили.
+A document without its own labels still gets one range. Without that, the previous document's Roman numerals would spill onto pages that did not ask for them.
 
-## Копирование по одной странице
+## Copying One Page at a Time
 
 ```csharp
 PdfPage copy = target.Pages.Import(page);
 IReadOnlyList<PdfPage> copies = target.Pages.ImportMany(source, [source.Pages[0], source.Pages[4]]);
 ```
 
-`Import` копирует граф одной страницы и ничего больше. `ImportMany` и `ImportAll` дополнительно
-переносят всю обвязку каталога, как это делает `Merge`.
+`Import` copies one page's graph and nothing else. `ImportMany` and `ImportAll` additionally transfer all catalog scaffolding, as `Merge` does.
 
-Общие объекты копируются один раз: страницы, делившие шрифт или картинку, делят их и после
-переноса. Ссылки между переносимыми страницами сохраняются — каждая получает номер в новом
-документе раньше, чем копируется первая. Ссылка на страницу, которую не просили, обрывается: иначе
-за ней в новый документ уехала бы и она сама, и всё, что она рисует.
+Shared objects are copied once: pages that shared a font or image still share them after the move. Links between transferred pages are preserved — each gets a number in the new document before the first one is copied. A link to a page that was not requested is broken: otherwise that page and everything it draws would have come along into the new document.

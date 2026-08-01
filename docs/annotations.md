@@ -1,8 +1,6 @@
-# Комментарии и аннотации
+# Comments and annotations
 
-Комментарий в PDF — это аннотация: словарь в массиве `/Annots` страницы. Библиотека даёт над ним
-типизированный слой `Inkwright.Annotations`: страница возвращает коллекцию, коллекция умеет
-добавлять, а сама аннотация — редактировать себя и удаляться вместе со всем, что к ней прицеплено.
+A comment in PDF is an annotation: a dictionary in the page’s `/Annots` array. The library provides a typed layer over it, `Inkwright.Annotations`: the page returns a collection, the collection can add items, and each annotation can edit itself and be deleted together with everything attached to it.
 
 ```csharp
 using Inkwright.Annotations;
@@ -14,290 +12,220 @@ foreach (PdfMarkupAnnotation comment in page.Annotations.Comments)
     Console.WriteLine($"{comment.Author} ({comment.CreatedAt:d}): {comment.Contents}");
 ```
 
-`Comments` — это верхнеуровневые комментарии: ответы и всплывающие окна в перечисление не попадают,
-потому что читатель показывает их внутри ветки. Полный список без фильтра — сама коллекция
-`page.Annotations`, там же ссылки и поля форм.
+`Comments` are top-level comments: replies and pop-up windows are not included in the enumeration because the reader shows them inside the thread. The full unfiltered list is the collection itself, `page.Annotations`, which also includes links and form fields.
 
-## Добавление
+## Adding
 
 ```csharp
-// Липкий стикер с иконкой
+// Sticky note with icon
 PdfTextAnnotation note = page.Annotations.AddNote(
-    new PdfPoint(505, 700), "Проверить ставку по договору", "Прия Раман", PdfNoteIcon.Help);
+    new PdfPoint(505, 700), "Check contract rate", "Priya Raman", PdfNoteIcon.Help);
 
-// Выделение по словам, а не по координатам
-page.Annotations.MarkText("Out-of-hours support", PdfAnnotationType.Highlight, author: "Прия Раман");
-page.Annotations.MarkText("sprint 15", PdfAnnotationType.StrikeOut, "Перенесено", "Прия Раман");
+// Highlight by words, not coordinates
+page.Annotations.MarkText("Out-of-hours support", PdfAnnotationType.Highlight, author: "Priya Raman");
+page.Annotations.MarkText("sprint 15", PdfAnnotationType.StrikeOut, "Postponed", "Priya Raman");
 
-// Текст прямо на странице
-page.Annotations.AddFreeText(new PdfRectangle(72, 500, 320, 580), "Нужна новая формулировка", "Редактор");
+// Text directly on the page
+page.Annotations.AddFreeText(new PdfRectangle(72, 500, 320, 580), "Needs new wording", "Editor");
 
-// Фигуры, чернила, штамп, вложение, ссылка
-page.Annotations.AddRectangle(new PdfRectangle(45, 60, 550, 95), "Смотри сюда", "Редактор", PdfColor.Red);
+// Shapes, ink, stamp, attachment, link
+page.Annotations.AddRectangle(new PdfRectangle(45, 60, 550, 95), "Look here", "Editor", PdfColor.Red);
 page.Annotations.AddEllipse(new PdfRectangle(240, 400, 380, 460), fill: PdfColor.Parse("#FFF3C4"));
 page.Annotations.AddLine(new PdfPoint(72, 380), new PdfPoint(380, 380));
 page.Annotations.AddInk([[new PdfPoint(80, 300), new PdfPoint(120, 340), new PdfPoint(160, 300)]]);
 page.Annotations.AddStamp(new PdfRectangle(400, 720, 550, 770), "Approved");
-page.Annotations.AddAttachment(new PdfPoint(72, 200), "расчёт.xlsx", bytes);
+page.Annotations.AddAttachment(new PdfPoint(72, 200), "calculation.xlsx", bytes);
 page.Annotations.AddLink(new PdfRectangle(72, 100, 200, 120), "https://example.org");
 
-// Обвести область, провести ломаную, отметить пропущенный знак
+// Outline a region, draw a polyline, mark a missing punctuation mark
 page.Annotations.AddPolygon([new PdfPoint(80, 600), new PdfPoint(200, 660), new PdfPoint(260, 580)]);
 page.Annotations.AddPolyLine([new PdfPoint(80, 500), new PdfPoint(160, 540), new PdfPoint(240, 500)]);
-page.Annotations.AddCaret(new PdfPoint(300, 420), "Здесь нужна запятая", "Редактор");
+page.Annotations.AddCaret(new PdfPoint(300, 420), "Comma needed here", "Editor");
 
-// Надпись на странице со стрелкой к тому, о чём она
+// On-page label with arrow to what it refers to
 page.Annotations.AddCallout(
-    new PdfRectangle(320, 620, 520, 680), new PdfPoint(240, 590), "Проверить этот угол", "Редактор");
+    new PdfRectangle(320, 620, 520, 680), new PdfPoint(240, 590), "Check this corner", "Editor");
 
-// Наконечники линии
+// Line endings
 page.Annotations.AddLine(new PdfPoint(60, 240), new PdfPoint(240, 240))
     .SetEndings(PdfLineEnding.None, PdfLineEnding.ClosedArrow);
 ```
 
-У выноски прямоугольник аннотации обязан накрывать и текст, и стрелку, поэтому `Rect` считается по
-ним обоим, а отступ до самой надписи пишется в `/RD`; читать его удобно через `TextBox`.
+For a callout, the annotation rectangle must cover both text and arrow, so `Rect` is computed from both, and the inset to the label itself is written in `/RD`; it is convenient to read through `TextBox`.
 
-`MarkText` — обычный способ комментировать: вызывающий называет слова, а библиотека сама ищет их
-через извлечение глифов (`page.FindText`) и раскладывает `/QuadPoints` по строкам, на которые попал
-текст. Возвращается по одной аннотации на каждое вхождение.
+`MarkText` is the usual way to comment: the caller names the words, and the library finds them via glyph extraction (`page.FindText`) and lays out `/QuadPoints` on the lines the text hit. One annotation is returned per occurrence.
 
-Порядок вершин в `/QuadPoints` пишется таким, какого ждут читатели (левый-верх, правый-верх,
-левый-низ, правый-низ), а не таким, как читается формулировка «против часовой стрелки» из
-ISO 32000-1. При чтении порядок неважен: область считается по габаритам всех четырёх точек, поэтому
-файлы обоих соглашений разбираются одинаково.
+Vertex order in `/QuadPoints` is written the way readers expect (top-left, top-right, bottom-left, bottom-right), not the way ISO 32000-1’s “counter-clockwise” wording reads. On read, order does not matter: the region is computed from the bounds of all four points, so files from both conventions parse the same way.
 
-## Ветки обсуждения и статусы
+## Discussion threads and statuses
 
 ```csharp
-PdfTextAnnotation answer = note.Reply("Да, ставка прежняя", "Том Вейр");
-answer.Reply("Спасибо", "Прия Раман");
+PdfTextAnnotation answer = note.Reply("Yes, same rate", "Tom Ware");
+answer.Reply("Thanks", "Priya Raman");
 
-note.SetReviewState(PdfReviewState.Completed, "Прия Раман", "Исправлено в четвёртой редакции");
+note.SetReviewState(PdfReviewState.Completed, "Priya Raman", "Fixed in fourth revision");
 
-Console.WriteLine(note.Thread.Count);         // 4: сам комментарий и три ответа
+Console.WriteLine(note.Thread.Count);         // 4: the comment itself and three replies
 Console.WriteLine(note.ReviewState);          // Completed
-Console.WriteLine(note.ReviewStateBy("Том Вейр")); // None — он статус не ставил
+Console.WriteLine(note.ReviewStateBy("Tom Ware")); // None — he did not set a status
 ```
 
-Ответ — это отдельная аннотация с `/IRT` на родителя и `/RT /R`. Статус рецензирования по
-спецификации хранится не в самой аннотации, а в ответе с `/State` и `/StateModel`: так двое
-рецензентов могут разойтись во мнениях, не затирая друг друга.
+A reply is a separate annotation with `/IRT` pointing to the parent and `/RT /R`. Per the specification, review status is stored not in the annotation itself but in a reply with `/State` and `/StateModel`: that way two reviewers can disagree without overwriting each other.
 
-Ответы не рисуются на странице: им выдаётся пустой appearance-поток. Просто убрать `/AP` мало —
-читатель, который сам придумывает иконку для текстовой аннотации (так делает встроенный просмотрщик
-Chrome), нарисовал бы поверх родителя по значку на каждый ответ.
+Replies are not drawn on the page: they get an empty appearance stream. Simply removing `/AP` is not enough—a reader that invents its own icon for a text annotation (as Chrome’s built-in viewer does) would draw over the parent with an icon for each reply.
 
-## Редактирование
+## Editing
 
 ```csharp
 PdfMarkupAnnotation comment = page.Annotations.Comments.First();
 
-comment.Contents = "Уточнённая формулировка";
-comment.Author = "Прия Раман";
-comment.Subject = "Условия оплаты";
+comment.Contents = "Revised wording";
+comment.Author = "Priya Raman";
+comment.Subject = "Payment terms";
 comment.Opacity = 0.6;
 comment.Color = PdfColor.Parse("#4CAF50");
 comment.Rectangle = comment.Rectangle.Translate(0, -20);
 comment.IsOpen = true;
 ```
 
-Любая запись обновляет `/M` и помечает объект изменённым, поэтому инкрементальное сохранение
-подхватит только его.
+Any write updates `/M` and marks the object changed, so incremental save picks up only that object.
 
-Абзацы в тексте комментария разделяются переводом строки в API и возвратом каретки в файле:
-§12.5.6.2 требует именно `CR`, и читатели понимают это буквально — текст с `LF` показывается одной
-строкой.
+Paragraphs in comment text are separated by newline in the API and carriage return in the file: §12.5.6.2 requires `CR` specifically, and readers take that literally—text with `LF` shows as one line.
 
-Перерисовка после правки происходит осторожно. Если аннотация пришла из файла с собственным
-рисунком — картинка-штамп, подпись, фигура, отрисованная другим инструментом, — этот рисунок
-остаётся: правка текста не повод выбрасывать то, что мы не умеем воспроизвести. Перерисовывается
-только то, что нарисовали мы сами, и то, у чего рисунка не было вовсе. Забрать вид себе можно явно:
+Redrawing after an edit is cautious. If the annotation came from a file with its own drawing—a stamp image, signature, figure drawn by another tool—that drawing stays: editing text is not a reason to discard what we cannot reproduce. Only what we drew ourselves, and what had no drawing at all, is redrawn. You can take over appearance explicitly:
 
 ```csharp
 comment.RegenerateAppearance();
 ```
 
-## Удаление
+## Deletion
 
 ```csharp
-comment.Delete();                                  // вместе с popup-окном и всей веткой ответов
+comment.Delete();                                  // together with pop-up and the entire reply thread
 page.Annotations.RemoveAll(a => a.Type == PdfAnnotationType.Highlight);
-page.Annotations.RemoveComments();                 // ссылки и поля форм остаются
-int removed = document.RemoveAllComments();        // по всему документу
+page.Annotations.RemoveComments();                 // links and form fields remain
+int removed = document.RemoveAllComments();        // across the whole document
 
 document.Save("clean.pdf", new PdfSaveOptions { RemoveUnusedObjects = true });
 ```
 
-Удаление снимает ссылку из `/Annots`, но сам словарь и его appearance-поток остаются в файле —
-именно поэтому «чистая» копия сохраняется с `RemoveUnusedObjects`. Без обрезки текст комментария
-физически остался бы в документе, хотя ни один читатель его не покажет.
+Deletion removes the reference from `/Annots`, but the dictionary itself and its appearance stream remain in the file—that is why a “clean” copy is saved with `RemoveUnusedObjects`. Without pruning, comment text would physically remain in the document even though no reader would show it.
 
-Каскад обязателен: если удалить комментарий и оставить ветку, ответы повиснут в воздухе, и читатель
-покажет их как отдельные заметки без темы. Вместе с аннотацией-вложением уходит и сам файл: его
-запись убирается из дерева имён `/Names /EmbeddedFiles` и из `/AF`, иначе «очищенный» документ
-продолжал бы носить вложение с собой.
+Cascade is mandatory: if you delete a comment and leave the thread, replies hang in the air and the reader shows them as separate notes without a topic. With an attachment annotation, the file goes too: its entry is removed from the `/Names /EmbeddedFiles` tree and from `/AF`; otherwise a “cleaned” document would still carry the attachment.
 
-## Уплощение
+## Flattening
 
 ```csharp
-page.Annotations.Flatten();                  // только комментарии
+page.Annotations.Flatten();                  // comments only
 page.Annotations.Flatten(a => a.Type == PdfAnnotationType.Stamp);
 int burnt = document.FlattenComments();
 ```
 
-Уплощение рисует appearance-поток аннотации в содержимое страницы и убирает саму аннотацию: пометки
-остаются видны везде, но открыть, подвинуть или удалить их уже нельзя. Расположение считается по
-§12.5.5 — habBox формы, преобразованный её `/Matrix`, масштабируется на `Rect`, и в поток пишется
-только этот второй шаг, потому что `Do` применяет `/Matrix` сам.
+Flattening draws the annotation’s appearance stream into page content and removes the annotation itself: marks stay visible everywhere, but they can no longer be opened, moved, or deleted. Placement follows §12.5.5—the form’s BBox transformed by its `/Matrix`, scaled to `Rect`, and only that second step is written to the stream because `Do` applies `/Matrix` itself.
 
-Ветка обсуждения уходит вместе с комментарием: на странице остаётся мазок, а разговор — нет.
-Скрытые (`Hidden`, `NoView`) аннотации не рисуются и не удаляются: их не видно, и уплощать нечего.
+The discussion thread goes with the comment: a stroke remains on the page, the conversation does not. Hidden (`Hidden`, `NoView`) annotations are not drawn and not removed: they are invisible, and there is nothing to flatten.
 
-## Выгрузка
+## Export
 
 ```csharp
 foreach (PdfCommentInfo comment in document.ExportComments())
 {
-    Console.WriteLine($"с.{comment.PageIndex + 1} {comment.Author}: {comment.Contents}");
-    Console.WriteLine($"  о тексте: {comment.QuotedText}");
+    Console.WriteLine($"p.{comment.PageIndex + 1} {comment.Author}: {comment.Contents}");
+    Console.WriteLine($"  on text: {comment.QuotedText}");
 
     foreach (PdfCommentInfo reply in comment.Replies)
         Console.WriteLine($"  ↳ {reply.Author}: {reply.Contents} [{reply.State}]");
 }
 ```
 
-`PdfCommentInfo` — плоская запись со страницей, типом, автором, текстом, датами, статусом, ветками и
-процитированным текстом; она сериализуется в JSON или таблицу без дополнительной работы.
+`PdfCommentInfo` is a flat record with page, type, author, text, dates, status, threads, and quoted text; it serializes to JSON or a table without extra work.
 
-`QuotedText` — это слова, которые накрывает пометка. Его дают только те типы, которые кладутся
-поверх текста: выделения, подчёркивания, зачёркивания, волны, рамки, эллипсы, полигоны, ломаные,
-чернила и линии. Заметка стоит рядом с текстом, `FreeText` несёт собственные слова, а штамп ложится
-поверх чего угодно — цитировать из-под них значит выдавать шум за доказательство.
+`QuotedText` is the words the mark covers. Only types that sit on top of text provide it: highlights, underlines, strikeouts, squiggles, rectangles, ellipses, polygons, polylines, ink, and lines. A note sits beside text, `FreeText` carries its own words, and a stamp lies on top of anything—quoting text beneath them would misrepresent unrelated content as evidence.
 
-Для одной аннотации есть `comment.GetQuotedText()`, но он каждый раз перечитывает страницу;
-`ExportComments` извлекает глифы один раз на страницу.
+For a single annotation there is `comment.GetQuotedText()`, but it re-reads the page each time; `ExportComments` extracts glyphs once per page.
 
-## Обмен рецензиями: XFDF и FDF
+## Review exchange: XFDF and FDF
 
-Рецензенты редко работают с одним файлом. Круг правок ходит между ними отдельно от документа — в
-XFDF (XML-формат ISO 19444-1) или в более старом FDF (ISO 32000-1 §12.7.7, синтаксис самого PDF).
-Оба направления доступны:
+Reviewers rarely work on one file. Review rounds travel between them separately from the document—in XFDF (ISO 19444-1 XML format) or the older FDF (ISO 32000-1 §12.7.7, PDF syntax itself). Both directions are available:
 
 ```csharp
-// Отдать свои правки
+// Send your edits
 string xfdf = document.ExportXfdf();
 byte[] fdf = document.ExportFdf();
-document.ExportReview("round-4.xfdf");   // формат по расширению
+document.ExportReview("round-4.xfdf");   // format from extension
 
-// Принять чужие
+// Accept someone else’s
 PdfReviewImportResult result = document.ImportXfdf(xfdf);
-document.ImportReview("round-4.fdf");    // формат по первым байтам файла
+document.ImportReview("round-4.fdf");    // format from first bytes of file
 
-Console.WriteLine($"{result.Added} новых, {result.Updated} обновлено, {result.Skipped} пропущено");
+Console.WriteLine($"{result.Added} new, {result.Updated} updated, {result.Skipped} skipped");
 foreach (string warning in result.Warnings)
     Console.WriteLine(warning);
 ```
 
-И XFDF, и FDF несут две половины — значения полей формы и комментарии, — и какая из них нужна,
-зависит от задачи. По умолчанию пишутся обе; `PdfExchangeContent` выбирает одну. Про форменную
-половину — [forms.md](forms.md).
+Both XFDF and FDF carry two halves—form field values and comments—and which one you need depends on the task. Both are written by default; `PdfExchangeContent` selects one. For the form half, see [forms.md](forms.md).
 
 ```csharp
 string comments = document.ExportXfdf(PdfExchangeContent.Annotations);
 string both = document.ExportXfdf(PdfExchangeContent.All, href: "contract.pdf");
 
 byte[] fdfComments = document.ExportFdf(PdfExchangeContent.Annotations);
-byte[] fdfFields = document.ExportFormDataFdf();          // только значения полей
+byte[] fdfFields = document.ExportFormDataFdf();          // field values only
 ```
 
-Импорт ничего не бросает из-за содержимого: чужой круг правок никогда не бывает ровно таким, как
-ожидаешь. Что не удалось разместить — сосчитано в `Skipped` и объяснено в `Warnings`.
-`PdfFormatException` остаётся только для случая, когда файл не является ни XFDF, ни FDF вообще.
+Import does not throw on content mismatches: someone else’s review round is never exactly what you expect. What could not be placed is counted in `Skipped` and explained in `Warnings`. `PdfFormatException` is thrown only when the file is neither XFDF nor FDF.
 
-### Как происходит слияние
+### How merging works
 
-Комментарии сопоставляются по имени `/NM` — тому самому, которое библиотека выдаёт каждой своей
-аннотации. Уже присутствующий комментарий переписывается на месте, тем же объектом: инкрементальное
-сохранение подхватит только его. Незнакомый добавляется на страницу, которую называет полезная
-нагрузка.
+Comments are matched by `/NM` name—the same one the library assigns to each of its annotations. An already present comment is rewritten in place, same object: incremental save picks up only that object. An unknown one is added to the page named by the payload.
 
-Из этого следует главное свойство: **повторный импорт того же круга ничего не удваивает**. Второй
-раз всё попадёт в `Updated`, а число аннотаций на странице не изменится.
+The main property follows: **re-importing the same round does not duplicate anything**. The second time everything lands in `Updated`, and the annotation count on the page does not change.
 
-Комментарию без `/NM` имя выдаётся при экспорте и при импорте — без него следующий круг не отличил
-бы ответ от второй копии.
+A comment without `/NM` gets a name on export and on import—without it the next round could not tell a reply from a second copy.
 
-Ответы связываются по имени, а не по номеру объекта: номер из чужого документа здесь ничего не
-значит. Ветка восстанавливается вторым проходом, когда все аннотации круга уже нашли своё место.
-Статусы рецензирования приезжают тем же способом, что и хранятся, — отдельными ответами со `/State`.
+Replies are linked by name, not object number: a number from another document means nothing here. The thread is restored in a second pass after all annotations from the round have found their place. Review statuses arrive the same way they are stored—as separate replies with `/State`.
 
-### Что выбрать
+### What to choose
 
-FDF — это синтаксис PDF, поэтому в нём едут и потоки внешнего вида: получатель увидит ровно тот
-рисунок, который нарисовал отправитель. XFDF внешний вид не переносит, и принятые комментарии
-отрисовываются заново по типу, цвету и геометрии. Для правок, сделанных этой библиотекой, результат
-неотличим; для штампа с картинкой из Acrobat — нет.
+FDF is PDF syntax, so appearance streams travel in it too: the recipient sees exactly the drawing the sender made. XFDF does not carry appearance, and accepted comments are redrawn from type, color, and geometry. For edits made with this library the result is indistinguishable; for a stamp with an image from Acrobat, it is not.
 
-Вложенный файл едет в обоих форматах: в FDF потоком, в XFDF — элементом `<data>` с base64.
+An embedded file travels in both formats: as a stream in FDF, as a `<data>` element with base64 in XFDF.
 
-### Границы
+### Limits
 
-- `<appearance>` в XFDF (сериализованный внешний вид) не разбирается — комментарий отрисовывается
-  заново, а в `Warnings` появляется запись. Если внешний вид важен, отправляйте FDF.
-- Значения полей форм (`<fields>`, `/Fields`) теперь возят оба формата в обе стороны — и XFDF, и FDF.
-  При импорте они пишутся в одноимённые поля документа; поле, которого в документе нет, отмечается
-  предупреждением, а не создаётся, потому что формат не говорит, какого оно было бы типа. Подробности —
-  в [forms.md](forms.md).
-- `/Differences`, `/JavaScript` и шаблонные `/Pages` из FDF игнорируются с предупреждением.
-- Экзотические `/Encoding` из FDF (Shift_JIS, BigFive, GBK, UHC) не поддерживаются — как и во всём
-  ядре, строки читаются как PDFDocEncoding или UTF-16.
-- Ссылки (`Link`) в обмен не входят: это не комментарии, и FDF прямо запрещает их в `/Annots`.
+- `<appearance>` in XFDF (serialized appearance) is not parsed—the comment is redrawn and a warning appears in `Warnings`. If appearance matters, send FDF.
+- Form field values (`<fields>`, `/Fields`) now travel both ways in both formats—XFDF and FDF. On import they are written to same-named fields in the document; a field missing from the document is flagged with a warning and not created, because the format does not say what type it would be. Details are in [forms.md](forms.md).
+- `/Differences`, `/JavaScript`, and template `/Pages` from FDF are ignored with a warning.
+- Exotic `/Encoding` from FDF (Shift_JIS, BigFive, GBK, UHC) is not supported—as throughout the core, strings are read as PDFDocEncoding or UTF-16.
+- Links (`Link`) are not part of exchange: they are not comments, and FDF explicitly forbids them in `/Annots`.
 
-## Внешний вид
+## Appearance
 
-Спецификация разрешает читателю рисовать комментарий по-своему, и каждый рисует иначе — а некоторые
-не рисуют вовсе. Поэтому библиотека сразу пишет appearance-поток: иконку заметки, заливку выделения,
-линию подчёркивания, волну, рамку, чернильные штрихи, штамп, скрепку вложения, текст `FreeText` с
-переносом по ширине рамки.
+The specification allows a reader to draw a comment its own way, and each draws differently—some not at all. So the library writes an appearance stream up front: note icon, highlight fill, underline, squiggle, frame, ink strokes, stamp, attachment paperclip, `FreeText` with wrapping to the frame width.
 
-Выделение рисуется в режиме `/Multiply`, иначе заливка закрыла бы те самые слова, которые выделяет.
-Прозрачность `/CA` запекается в поток через `ExtGState`, потому что при наличии appearance читатель
-игнорирует значение из словаря.
+Highlight is drawn in `/Multiply` mode; otherwise the fill would cover the very words being highlighted. `/CA` transparency is baked into the stream via `ExtGState`, because when appearance is present the reader ignores the dictionary value.
 
-`BBox` формы задаётся в координатах страницы, а `/Matrix` остаётся единичной: тогда преобразование
-из §12.5.5 вырождается в тождественное, и рисунок ложится ровно туда, куда указывает геометрия.
+The form `BBox` is set in page coordinates and `/Matrix` stays identity: then the §12.5.5 transform degenerates to identity and the drawing lands exactly where geometry points.
 
-Повторная правка одного комментария не плодит потоки — рисунок перезаписывается в том же объекте.
+Editing one comment again does not spawn streams—the drawing is overwritten in the same object.
 
-## Поиск текста
+## Text search
 
 ```csharp
-foreach (PdfTextMatch match in page.FindText("итого"))
+foreach (PdfTextMatch match in page.FindText("total"))
     Console.WriteLine($"{match.Text} {match.Bounds}");
 ```
 
-`FindText` работает по глифам, а не по плоской строке: поэтому результат — это прямоугольники на
-странице, по одному на каждую строку, через которые прошло совпадение. Пробелы между словами
-достраиваются по расстоянию между глифами, так как в потоке содержимого пробел обычно не рисуется.
+`FindText` works on glyphs, not a flat string: the result is rectangles on the page, one per line the match crossed. Spaces between words are inferred from glyph spacing, because content streams usually do not draw a space character.
 
-## Комментарии и PDF/A
+## Comments and PDF/A
 
-`PdfAProfile.Validate` проверяет аннотации по разделу 6.3 архивного стандарта: запрещённые подтипы
-(`3D`, `Sound`, `Screen`, `Movie`), обязательный `/F` с установленным Print и снятыми Hidden,
-Invisible, NoView и ToggleNoView, `NoZoom` и `NoRotate` у заметок, наличие appearance-потока у всего
-кроме `Popup`, `Link` и вырожденных прямоугольников, и `/AP` только с ключом `/N`.
+`PdfAProfile.Validate` checks annotations against archival standard section 6.3: forbidden subtypes (`3D`, `Sound`, `Screen`, `Movie`), required `/F` with Print set and Hidden, Invisible, NoView, and ToggleNoView cleared, `NoZoom` and `NoRotate` on notes, appearance stream on everything except `Popup`, `Link`, and degenerate rectangles, and `/AP` with only the `/N` key.
 
-Комментарий, добавленный этой библиотекой, проходит проверку как есть. А вот `IsHidden = true`
-ломает соответствие, и это ровно тот случай, когда без проверки узнаёшь о проблеме от чужого
-валидатора через месяц.
+A comment added by this library passes validation as-is. But `IsHidden = true` breaks compliance—and that is exactly the case where you learn about the problem from someone else’s validator a month later without checking yourself.
 
-Отдельно проверяется, что документ PDF/A-2 не носит вложений, которые заведомо не являются PDF:
-часть 2 разрешает вкладывать только файлы, сами соответствующие PDF/A, — для XML-счёта нужна часть 3.
+Separately, it is checked that a PDF/A-2 document does not carry attachments that are clearly not PDF: part 2 allows embedding only files that are themselves PDF/A-compliant—for an XML invoice you need part 3.
 
-## Что читается, но не моделируется
+## What is read but not modeled
 
-Типы, которых нет в модели (`Sound`, `Movie`, `Screen`, `Watermark`, `Redact`, `3D`), возвращаются
-как `PdfGenericAnnotation`: общие свойства доступны, остальное — через `annotation.Dictionary`. При
-перезаписи файла они сохраняются целиком. В обмене рецензиями они не участвуют: XFDF описывает их
-элементами, которых нет в списке комментариев, и такой элемент отмечается предупреждением.
+Types absent from the model (`Sound`, `Movie`, `Screen`, `Watermark`, `Redact`, `3D`) are returned as `PdfGenericAnnotation`: common properties are available, the rest through `annotation.Dictionary`. On rewrite they are preserved intact. They do not participate in review exchange: XFDF describes them with elements not in the comment list, and such an element is flagged with a warning.

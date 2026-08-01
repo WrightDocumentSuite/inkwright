@@ -1,109 +1,109 @@
-# Сверка с ISO 32000-2
+# Alignment with ISO 32000-2
 
-## Что было и что стало
+## Before and After
 
-До этой ревизии библиотека сверялась с **ISO/DIS 32000-2** — черновиком международного стандарта
-от 2017-01-09. Черновик и опубликованный стандарт — разные документы, и строить заявление о
-поддержке PDF 2.0 на черновике нельзя.
+Before this revision the library was aligned with **ISO/DIS 32000-2** — the international standard draft
+from 2017-01-09. A draft and a published standard are different documents, and you cannot base a claim of
+PDF 2.0 support on a draft.
 
-Теперь источник — **ISO 32000-2:2020, второе издание (2020-12), Errata Collection 3 от 1 июня 2026
-года**. Второе издание отменяет и заменяет первое (2017), которое было технически пересмотрено;
-места ключевых правок 2020 года помечены в тексте строкой «(2020)».
+The source is now **ISO 32000-2:2020, second edition (2020-12), Errata Collection 3 dated 1 June 2026**.
+The second edition supersedes and replaces the first (2017), which received a technical revision;
+key 2020 amendments are marked in the text with "(2020)".
 
-## Разделы, переписанные в PDF 2.0
+## Clauses Rewritten in PDF 2.0
 
-Сам стандарт (клауза 0.3) перечисляет, что переписано существенно. Из этого списка библиотеки
-касаются:
+The standard itself (clause 0.3) lists what was substantially rewritten. From that list the library
+is affected by:
 
-- **7.4.7 «JBIG2Decode filter»** — переписан целиком. Требования разобраны ниже; они прямо задают
-  рамки декодера.
-- **12.8 «Digital signatures»** — переписан. Затрагивает `Inkwright.Signing`.
-- **14.3 «Metadata»** — переписан. Затрагивает запись XMP.
-- **14.8 «Tagged PDF»** и **14.9 «Repurposing and accessibility support»** — переписаны. Основание
-  для профиля PDF/UA.
+- **7.4.7 "JBIG2Decode filter"** — rewritten in full. Requirements are broken down below; they directly set
+  the bounds of the decoder.
+- **12.8 "Digital signatures"** — rewritten. Affects `Inkwright.Signing`.
+- **14.3 "Metadata"** — rewritten. Affects XMP writing.
+- **14.8 "Tagged PDF"** and **14.9 "Repurposing and accessibility support"** — rewritten. Basis
+  for the PDF/UA profile.
 
-Не касаются: 10.1–10.3 «Rendering» и 11 «Transparency» — библиотека не растеризует и не смешивает.
+Not affected: 10.1–10.3 "Rendering" and 11 "Transparency" — the library does not rasterize or blend.
 
-## Обновлённые нормативные ссылки
+## Updated Normative References
 
-- JBIG2 — теперь **ISO/IEC 14492:2019** вместо редакции 2001 года.
-- Open Font Format — теперь **ISO/IEC 14496-22:2019**.
-- ICC.1 — ISO 15076-1:2010 дополняется списком errata.
+- JBIG2 — now **ISO/IEC 14492:2019** instead of the 2001 edition.
+- Open Font Format — now **ISO/IEC 14496-22:2019**.
+- ICC.1 — ISO 15076-1:2010 is supplemented by an errata list.
 
-## Возможности PDF 2.0, относящиеся к работе библиотеки
+## PDF 2.0 Features Relevant to the Library
 
-Новые:
+New:
 
-- **14.7.4 «Namespaces»** для тегового PDF — основание для ISO/TS 32005 и PDF/UA-2. *Реализовано.*
-- **14.13 «Associated files»** — вместе с Application Note 002. *Реализовано.*
-- **12.8.3.4 «CAdES signatures as used in PDF»**, **12.8.4 «Long term validation»**,
-  **12.8.4.3 «Document Security Store»**, **12.8.5 «Document timestamp»** — уровни PAdES выше B-T.
-  *Реализовано:* `PdfTimestamper` (DTS), `PdfLongTermValidation` (DSS/VRI), строительные блоки для
-  сборки B-LTA из предварительно проверенных приложением validation data.
-- **12.8.2.2 «DocMDP»** и **12.8.2.4 «FieldMDP»** — сертификационные подписи и блокировка полей.
-  *Реализовано:* `CertificationLevel`, `PdfFieldLock`.
-- **7.6.5 «Public-key security handlers»** — сертификатное шифрование. *Реализовано* на `EnvelopedCms`.
-- **7.6.7 «Unencrypted wrapper document»** — не реализовано (ниша).
-- **8.6.5.9 «Use of black point compensation»** — вместе с Application Note 001. *Реализовано.*
-- **14.12 «Document parts»** — не реализовано (ниша).
-- Поддержка UTF-8 в текстовых строках. *Реализовано* на чтении.
-- **Архивное соответствие для PDF 2.0** — ISO 19005-4 (PDF/A-4), единственная часть PDF/A, написанная
-  против этого стандарта. *Реализовано:* уровни `A4`, `A4E`, `A4F`, см.
-  [матрицу](pdfa4-matrix.md). До неё библиотека умела писать PDF 2.0 и умела заявлять PDF/A, но
-  одновременно эти два не сходились: части 1–3 требуют заголовок `%PDF-1.n`.
+- **14.7.4 "Namespaces"** for tagged PDF — basis for ISO/TS 32005 and PDF/UA-2. *Implemented.*
+- **14.13 "Associated files"** — together with Application Note 002. *Implemented.*
+- **12.8.3.4 "CAdES signatures as used in PDF"**, **12.8.4 "Long term validation"**,
+  **12.8.4.3 "Document Security Store"**, **12.8.5 "Document timestamp"** — PAdES levels above B-T.
+  *Implemented:* `PdfTimestamper` (DTS), `PdfLongTermValidation` (DSS/VRI), building blocks for
+  assembling B-LTA from application-prevalidated validation data.
+- **12.8.2.2 "DocMDP"** and **12.8.2.4 "FieldMDP"** — certification signatures and field locking.
+  *Implemented:* `CertificationLevel`, `PdfFieldLock`.
+- **7.6.5 "Public-key security handlers"** — certificate encryption. *Implemented* on `EnvelopedCms`.
+- **7.6.7 "Unencrypted wrapper document"** — not implemented (niche).
+- **8.6.5.9 "Use of black point compensation"** — together with Application Note 001. *Implemented.*
+- **14.12 "Document parts"** — not implemented (niche).
+- UTF-8 support in text strings. *Implemented* on read.
+- **Archival conformance for PDF 2.0** — ISO 19005-4 (PDF/A-4), the only PDF/A part written
+  against this standard. *Implemented:* levels `A4`, `A4E`, `A4F`, see
+  [matrix](pdfa4-matrix.md). Before that the library could write PDF 2.0 and could claim PDF/A, but
+  the two did not meet: parts 1–3 require header `%PDF-1.n`.
 
-Расширения существующего: 256-битный AES, сертификаты на эллиптических кривых, пароли в Unicode,
-output intent на уровне страницы (*реализовано:* `PdfPage.AddOutputIntent`), ключ `L` для данных
-встроенного изображения (*реализовано:* объявленная длина имеет приоритет над поиском `EI`, см.
-[reading.md](reading.md)), ссылки на элемент структуры из действий `GoTo` и `GoToR`
-(*реализовано:* structure destinations, запись `/SD` закладки).
+Extensions of existing features: 256-bit AES, elliptic-curve certificates, Unicode passwords,
+page-level output intent (*implemented:* `PdfPage.AddOutputIntent`), `L` key for embedded image data
+(*implemented:* declared length takes priority over searching for `EI`, see
+[reading.md](reading.md)), structure element references from `GoTo` and `GoToR` actions
+(*implemented:* structure destinations, `/SD` bookmark writing).
 
-## 7.4.6 CCITTFaxDecode: параметры таблицы 11
+## 7.4.6 CCITTFaxDecode: Table 11 Parameters
 
-Полный нормативный список, по которому написан декодер:
+The full normative list the decoder was written against:
 
-- `K` — меньше нуля: чистое двумерное кодирование (Group 4); ноль: чистое одномерное (Group 3, 1-D);
-  больше нуля: смешанное (Group 3, 2-D), где за строкой, закодированной одномерно, следует не более
-  `K-1` строк, закодированных двумерно. Фильтр обязан различать знак `K`, но не обязан различать
-  разные положительные значения. По умолчанию ноль.
-- `EndOfLine` — присутствуют ли последовательности конца строки. Декодер обязан принимать их
-  всегда; флаг говорит лишь о том, что они гарантированно есть. По умолчанию ложь.
-- `EncodedByteAlign` — выравнивать ли начало каждой строки на границу байта. По умолчанию ложь.
-- `Columns` — ширина в пикселях; если не кратна восьми, ширина незакодированного изображения
-  дополняется до следующего кратного восьми. По умолчанию 1728.
-- `Rows` — высота в строках; ноль или отсутствие означает, что высота заранее неизвестна и данные
-  оканчиваются последовательностью конца блока. По умолчанию ноль.
-- `EndOfBlock` — ожидается ли завершение последовательностью конца блока, что перекрывает `Rows`.
-  Последовательность — это EOFB или RTC, смотря по `K`. По умолчанию истина.
-- `BlackIs1` — трактовать ли единичные биты как чёрное, что обратно обычному соглашению PDF.
-  По умолчанию ложь.
-- `DamagedRowsBeforeError` — сколько повреждённых строк терпеть. Применяется только когда
-  `EndOfLine` истинно и `K` неотрицательно. По умолчанию ноль.
+- `K` — less than zero: pure two-dimensional encoding (Group 4); zero: pure one-dimensional (Group 3, 1-D);
+  greater than zero: mixed (Group 3, 2-D), where after a line encoded one-dimensionally at most
+  `K-1` lines encoded two-dimensionally follow. The filter must distinguish the sign of `K` but need not distinguish
+  different positive values. Default zero.
+- `EndOfLine` — whether end-of-line sequences are present. The decoder must accept them
+  always; the flag only states that they are guaranteed. Default false.
+- `EncodedByteAlign` — whether to align the start of each line to a byte boundary. Default false.
+- `Columns` — width in pixels; if not a multiple of eight, the width of the decoded image
+  is padded to the next multiple of eight. Default 1728.
+- `Rows` — height in lines; zero or absence means height is not known in advance and data
+  ends with an end-of-block sequence. Default zero.
+- `EndOfBlock` — whether completion is expected via an end-of-block sequence, which overrides `Rows`.
+  The sequence is EOFB or RTC, depending on `K`. Default true.
+- `BlackIs1` — whether to treat 1 bits as black, which is the reverse of the usual PDF convention.
+  Default false.
+- `DamagedRowsBeforeError` — how many damaged rows to tolerate. Applies only when
+  `EndOfLine` is true and `K` is non-negative. Default zero.
 
-## 7.4.7 JBIG2Decode: рамки, заданные PDF
+## 7.4.7 JBIG2Decode: Bounds Set by PDF
 
-Стандарт сужает JBIG2 до подмножества, и это подмножество определяет, что декодеру вообще может
-встретиться:
+The standard narrows JBIG2 to a subset, and that subset defines what the decoder can
+encounter at all:
 
-- Кодирование по **ISO/IEC 14492:2019**, **без цветовой палитры**: сегменты типа 54 не допускаются,
-  флаг расширения цвета `COLEXTFLAG` в заголовках сегментов и файла обязан быть нулевым.
-- Только **битональные данные**, один бит на пиксель.
-- Только **страница 1** потока. Общие сегменты при этом могут разделяться несколькими XObject.
-- Фильтр **не применяется к встроенным изображениям**.
-- **Встроенная организация** по Annex D.3 стандарта JBIG2; двухбайтовый маркер из D.3
-  присутствовать не должен.
-- **Последовательная организация** по Annex D.1.
-- **Заголовок файла JBIG2, сегменты конца страницы и конца файла отсутствуют.**
-- XObject содержит все сегменты своей страницы, и поле привязки сегмента к странице в нём всегда
-  равно единице.
-- Глобальные сегменты (привязка к странице ноль) лежат в отдельном потоке, на который указывает
-  `/JBIG2Globals`; поток может разделяться несколькими XObject.
+- Encoding per **ISO/IEC 14492:2019**, **without color palette**: type 54 segments are not allowed,
+  the color extension flag `COLEXTFLAG` in segment and file headers must be zero.
+- **Bitonal data only**, one bit per pixel.
+- **Page 1 only** of the stream. Shared segments may still be shared by several XObjects.
+- The filter **is not applied to inline images**.
+- **Embedded organization** per Annex D.3 of the JBIG2 standard; the two-byte marker from D.3
+  must not be present.
+- **Sequential organization** per Annex D.1.
+- **JBIG2 file header, end-of-page segments, and end-of-file segments are absent.**
+- The XObject contains all segments of its page, and the segment page association field in it is always
+  equal to one.
+- Global segments (page association zero) lie in a separate stream pointed to by
+  `/JBIG2Globals`; the stream may be shared by several XObjects.
 
-Рекомендация, не требование: сегменты следует располагать по возрастанию номера.
+Recommendation, not requirement: segments should be arranged in ascending segment number order.
 
-## Что это меняет в коде
+## What This Changes in the Code
 
-- Декодер JBIG2 может опираться на отсутствие заголовка файла и на последовательную организацию —
-  разбор начинается сразу с заголовка первого сегмента.
-- Проверять `COLEXTFLAG` и отвергать сегменты типа 54 — это требование, а не вольность.
-- Ссылки на редакции в документации и в правилах PDF/A обновлены на 14492:2019 и 14496-22:2019.
+- The JBIG2 decoder can rely on absence of a file header and on sequential organization —
+  parsing starts directly with the first segment header.
+- Checking `COLEXTFLAG` and rejecting type 54 segments is a requirement, not optional.
+- Edition references in documentation and PDF/A rules were updated to 14492:2019 and 14496-22:2019.
