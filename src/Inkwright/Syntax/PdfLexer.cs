@@ -1,5 +1,6 @@
 using System.Buffers.Text;
 using System.Globalization;
+using Inkwright.Diagnostics;
 
 namespace Inkwright.Syntax;
 
@@ -31,11 +32,13 @@ internal enum PdfTokenType : byte
 internal ref struct PdfLexer
 {
     private readonly ReadOnlySpan<byte> _data;
+    private readonly bool _strict;
     private int _position;
 
-    internal PdfLexer(ReadOnlySpan<byte> data, int position = 0)
+    internal PdfLexer(ReadOnlySpan<byte> data, int position = 0, bool strict = false)
     {
         _data = data;
+        _strict = strict;
         _position = position;
         TokenType = PdfTokenType.EndOfInput;
         TokenSpan = default;
@@ -149,11 +152,23 @@ internal ref struct PdfLexer
                         return Set(PdfTokenType.DictionaryEnd, 2);
                     }
 
+                    if (_strict)
+                    {
+                        throw new PdfFormatException(
+                            "A protected object value contains the stray closing delimiter '>'.");
+                    }
+
                     // A stray '>' or ')' is noise from a damaged file; step over it and retry.
                     _position++;
                     continue;
 
                 case (byte)')':
+                    if (_strict)
+                    {
+                        throw new PdfFormatException(
+                            "A protected object value contains the stray closing delimiter ')'.");
+                    }
+
                     _position++;
                     continue;
             }
@@ -259,13 +274,68 @@ internal ref struct PdfLexer
 
         TokenType = PdfTokenType.Name;
         TokenSpan = _data[start.._position];
+
+        if (_strict)
+            ValidateStrictName(TokenSpan);
+
         return TokenType;
+    }
+
+    private static void ValidateStrictName(ReadOnlySpan<byte> name)
+    {
+        for (int i = 0; i < name.Length; i++)
+        {
+            if (name[i] != (byte)'#')
+                continue;
+
+            if (i + 2 >= name.Length ||
+                PdfCharacters.HexValue(name[i + 1]) < 0 ||
+                PdfCharacters.HexValue(name[i + 2]) < 0)
+            {
+                throw new PdfFormatException(
+                    "A protected name contains # without exactly two hexadecimal digits.");
+            }
+
+            int value = (PdfCharacters.HexValue(name[i + 1]) << 4) |
+                        PdfCharacters.HexValue(name[i + 2]);
+            if (value == 0)
+            {
+                throw new PdfFormatException(
+                    "A protected name shall not contain an encoded null byte.");
+            }
+
+            i += 2;
+        }
     }
 
     private PdfTokenType ReadNumber()
     {
         int start = _position;
         bool isReal = false;
+
+        if (_strict)
+        {
+            // ISO 32000-2 7.2.3 makes every consecutive run of regular characters one token.
+            // Scanning the whole run is important: accepting only the numeric prefix of `12abc`
+            // would silently turn one malformed token into two different objects.
+            while (_position < _data.Length && PdfCharacters.IsRegular(_data[_position]))
+                _position++;
+
+            TokenSpan = _data[start.._position];
+            if (!TryParseStrictNumber(TokenSpan, out double value, out isReal))
+            {
+                throw new PdfFormatException(
+                    "A protected numeric token is not a complete PDF integer or real number.");
+            }
+
+            TokenType = isReal ? PdfTokenType.Real : PdfTokenType.Integer;
+            NumberValue = value;
+
+            if (!isReal && (NumberValue > long.MaxValue || NumberValue < long.MinValue))
+                TokenType = PdfTokenType.Real;
+
+            return TokenType;
+        }
 
         while (_position < _data.Length)
         {
@@ -293,6 +363,45 @@ internal ref struct PdfLexer
             TokenType = PdfTokenType.Real;
 
         return TokenType;
+    }
+
+    private static bool TryParseStrictNumber(
+        ReadOnlySpan<byte> text,
+        out double value,
+        out bool isReal)
+    {
+        value = 0;
+        isReal = false;
+        if (text.IsEmpty)
+            return false;
+
+        int position = text[0] is (byte)'+' or (byte)'-' ? 1 : 0;
+        int digits = 0;
+
+        while (position < text.Length && text[position] is >= (byte)'0' and <= (byte)'9')
+        {
+            position++;
+            digits++;
+        }
+
+        if (position < text.Length && text[position] == (byte)'.')
+        {
+            isReal = true;
+            position++;
+
+            while (position < text.Length && text[position] is >= (byte)'0' and <= (byte)'9')
+            {
+                position++;
+                digits++;
+            }
+        }
+
+        if (digits == 0 || position != text.Length)
+            return false;
+
+        return Utf8Parser.TryParse(text, out value, out int consumed) &&
+               consumed == text.Length &&
+               double.IsFinite(value);
     }
 
     private PdfTokenType ReadKeyword()
@@ -338,6 +447,12 @@ internal ref struct PdfLexer
         TokenSpan = _data[start..end];
         TokenType = PdfTokenType.LiteralString;
 
+        if (_strict && (_position >= _data.Length || depth != 0))
+        {
+            throw new PdfFormatException(
+                "A protected literal string is not closed with a right parenthesis.");
+        }
+
         if (_position < _data.Length)
             _position++; // the closing parenthesis
 
@@ -354,6 +469,24 @@ internal ref struct PdfLexer
 
         TokenSpan = _data[start.._position];
         TokenType = PdfTokenType.HexString;
+
+        if (_strict && end < 0)
+        {
+            throw new PdfFormatException(
+                "A protected hexadecimal string is not closed with >.");
+        }
+
+        if (_strict)
+        {
+            foreach (byte value in TokenSpan)
+            {
+                if (PdfCharacters.HexValue(value) < 0 && !PdfCharacters.IsWhitespace(value))
+                {
+                    throw new PdfFormatException(
+                        "A protected hexadecimal string contains a non-hexadecimal byte.");
+                }
+            }
+        }
 
         if (_position < _data.Length)
             _position++; // the closing angle bracket

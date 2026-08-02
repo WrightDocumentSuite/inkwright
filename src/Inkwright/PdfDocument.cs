@@ -15,7 +15,7 @@ public sealed partial class PdfDocument : IPdfResolver, IDisposable
 {
     /// <summary>What the library calls itself in the information dictionary and in the metadata.</summary>
     internal static readonly string ProducerName =
-        $"Inkwright {typeof(PdfDocument).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion.Split('+')[0] ?? "0.1.0"}";
+        $"Inkwright {typeof(PdfDocument).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion.Split('+')[0] ?? "0.1.3"}";
 
     private readonly PdfReader? _reader;
     private readonly Dictionary<int, PdfValue> _added = [];
@@ -66,6 +66,12 @@ public sealed partial class PdfDocument : IPdfResolver, IDisposable
         Catalog = reader.Catalog ?? new PdfDictionary { Resolver = this };
         CatalogId = ReferenceOf(Trailer, PdfNames.Root);
 
+        if (!reader.Recover &&
+            (!Trailer.TryGetRaw(PdfNames.Root, out PdfValue rootEntry) || !rootEntry.IsReference))
+        {
+            throw new PdfFormatException("The trailer Root entry must be an indirect reference.");
+        }
+
         // New objects start above everything the file reserved, not just above what it actually
         // holds: a dangling reference to a number inside Size must stay dangling, or the object we
         // put there would silently become whatever pointed at it.
@@ -97,8 +103,20 @@ public sealed partial class PdfDocument : IPdfResolver, IDisposable
         Info = new PdfDocumentInfo(infoDictionary, () => MarkChanged(InfoId));
 
         PageTreeRootId = ReferenceOf(Catalog, PdfNames.Pages);
-        PageTreeRoot = Catalog.GetDictionary(PdfNames.Pages) ?? BuildEmptyPageTree();
-        Pages = new PdfPageCollection(this, PageTreeWalker.Collect(this, Catalog, Diagnostics));
+        if (!reader.Recover &&
+            (!Catalog.TryGetRaw(PdfNames.Pages, out PdfValue pagesEntry) || !pagesEntry.IsReference))
+        {
+            throw new PdfFormatException("The document catalog Pages entry must be an indirect reference.");
+        }
+
+        PdfDictionary? pageTreeRoot = Catalog.GetDictionary(PdfNames.Pages);
+        if (pageTreeRoot is null && !reader.Recover)
+            throw new PdfFormatException("The document catalog has no usable Pages tree.");
+
+        PageTreeRoot = pageTreeRoot ?? BuildEmptyPageTree();
+        List<PdfPage> loadedPages = PageTreeWalker.Collect(this, Catalog, Diagnostics);
+        reader.ValidateProtectedLinearizedPages(loadedPages);
+        Pages = new PdfPageCollection(this, loadedPages);
     }
 
     /// <summary>The document catalog (§7.7.2).</summary>
@@ -208,6 +226,29 @@ public sealed partial class PdfDocument : IPdfResolver, IDisposable
 
     internal PdfReader? Reader => _reader;
 
+    /// <summary>
+    /// Every indirect object that would be preserved by a save, including objects not reachable
+    /// from the catalogue. File-level conformance rules use this without treating those objects as
+    /// page resources or other semantic content.
+    /// </summary>
+    internal IEnumerable<PdfObjectId> IndirectObjectIds
+    {
+        get
+        {
+            if (_reader is not null)
+            {
+                foreach (int number in _reader.LiveObjectNumbers)
+                {
+                    if (!_added.ContainsKey(number))
+                        yield return new PdfObjectId(number, _reader.GetGeneration(number));
+                }
+            }
+
+            foreach (int number in _added.Keys)
+                yield return new PdfObjectId(number, 0);
+        }
+    }
+
     /// <summary>Creates an empty document with no pages.</summary>
     public static PdfDocument Create() => new(null);
 
@@ -297,7 +338,7 @@ public sealed partial class PdfDocument : IPdfResolver, IDisposable
     public PdfValue Resolve(PdfValue value)
     {
         for (int depth = 0; value.IsReference && depth < 64; depth++)
-            value = GetObject(value.AsReference.Number);
+            value = GetObject(value.AsReference);
 
         return value.IsReference ? PdfValue.Null : value;
     }
@@ -309,7 +350,10 @@ public sealed partial class PdfDocument : IPdfResolver, IDisposable
 
     /// <summary>Fetches an indirect object.</summary>
     /// <param name="id">The object identity.</param>
-    public PdfValue GetObject(PdfObjectId id) => GetObject(id.Number);
+    public PdfValue GetObject(PdfObjectId id) =>
+        _added.TryGetValue(id.Number, out PdfValue added)
+            ? added
+            : _reader?.GetObject(id) ?? PdfValue.Null;
 
     /// <summary>
     /// Stores a value as a new indirect object and returns its identity. Containers inside the value

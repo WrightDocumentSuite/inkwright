@@ -5,7 +5,7 @@ namespace Inkwright.Layout;
 internal static partial class PdfARules
 {
     /// <summary>The structure types ISO 32000-1 defines in 14.8.4; anything else needs a role map.</summary>
-    private static readonly string[] StandardStructureTypes =
+    private static readonly string[] _standardStructureTypes =
     [
         "Document", "Part", "Art", "Sect", "Div", "BlockQuote", "Caption", "TOC", "TOCI", "Index",
         "NonStruct", "Private", "P", "H", "H1", "H2", "H3", "H4", "H5", "H6", "L", "LI", "Lbl",
@@ -14,9 +14,14 @@ internal static partial class PdfARules
         "WT", "WP", "Figure", "Formula", "Form",
     ];
 
-    /// <summary>Clause 6.8 of part 1, clause 6.7 of parts 2 and 3: the logical structure of level A.</summary>
+    /// <summary>Clause 6.8 of part 1 and 6.7 of parts 2 and 3: the logical structure of level A.</summary>
     internal static void CheckLogicalStructure(PdfAContext context)
     {
+        // Part 4 clause 6.8 is explanatory and contains no conformance requirement. Accessibility
+        // requirements belong to PDF/UA; the normative level-A rules only exist in parts 1 to 3.
+        if (context.Part == 4)
+            return;
+
         CheckLanguage(context);
 
         if (!context.Conformance.RequiresStructure)
@@ -77,7 +82,7 @@ internal static partial class PdfARules
 
     private static bool Resolves(string type, PdfDictionary roles, int depth)
     {
-        if (StandardStructureTypes.Contains(type, StringComparer.Ordinal))
+        if (_standardStructureTypes.Contains(type, StringComparer.Ordinal))
             return true;
 
         if (depth > 16 || roles.GetName(PdfName.Get(type)) is not { } mapped)

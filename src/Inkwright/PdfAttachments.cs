@@ -257,6 +257,12 @@ public sealed class PdfAttachments
         if (spec.IsNull)
             return;
 
+        // ISO 32000 requires a file-specification dictionary carrying EF to be indirect. Name-tree
+        // enumeration resolves source references before merge import, so promote the copied direct
+        // dictionary back into the target object table before listing it.
+        if (spec.Kind == PdfValueKind.Dictionary)
+            spec = PdfValue.Reference(_document.AddObject(spec));
+
         AddToNameTree(name, spec);
         AddToAssociatedFiles(spec);
     }

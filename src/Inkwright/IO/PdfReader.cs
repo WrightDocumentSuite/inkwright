@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using Inkwright.Cos;
 using Inkwright.Diagnostics;
 using Inkwright.Security;
@@ -19,6 +20,8 @@ public sealed partial class PdfReader : IPdfResolver
     private readonly Dictionary<int, XrefEntry> _entries = [];
     private readonly Dictionary<int, PdfValue> _cache = [];
     private readonly Dictionary<int, ObjectStreamIndex?> _objectStreams = [];
+    private readonly Dictionary<int, (int Start, int End)> _protectedObjectRanges = [];
+    private readonly Dictionary<int, (int Start, int End)> _protectedStreamPayloadRanges = [];
     private readonly HashSet<int> _loading = [];
     private readonly PdfReadOptions _options;
 
@@ -72,6 +75,12 @@ public sealed partial class PdfReader : IPdfResolver
 
     /// <summary>The security handler that opened the file, so an appended section can reuse its key.</summary>
     internal Security.StandardSecurityHandler? Security => _security;
+
+    /// <summary>Whether damaged structure may be rebuilt by scanning the source bytes.</summary>
+    internal bool Recover => _options.Recover;
+
+    /// <summary>Whether streams and structural objects are being parsed under a fail-closed policy.</summary>
+    internal bool UsesProtectedDecoding => _options.StreamDecodePolicy is not null;
 
     /// <summary>Opens a file from a byte array, which the reader keeps a reference to.</summary>
     /// <param name="data">The whole file.</param>
@@ -155,8 +164,20 @@ public sealed partial class PdfReader : IPdfResolver
     }
 
     /// <summary>Fetches an indirect object.</summary>
-    /// <param name="id">The object identity; the generation is not checked.</param>
-    public PdfValue GetObject(PdfObjectId id) => GetObject(id.Number);
+    /// <param name="id">The object identity.</param>
+    public PdfValue GetObject(PdfObjectId id)
+    {
+        if (_options.StreamDecodePolicy is not null &&
+            _entries.TryGetValue(id.Number, out XrefEntry entry) &&
+            entry.Type is XrefEntryType.Normal or XrefEntryType.Compressed)
+        {
+            int expectedGeneration = entry.Type == XrefEntryType.Normal ? entry.Generation : 0;
+            if (id.Generation != expectedGeneration)
+                return PdfValue.Null;
+        }
+
+        return GetObject(id.Number);
+    }
 
     /// <summary>
     /// Where reference resolution is sent once a document wraps this reader. Objects the document
@@ -171,7 +192,7 @@ public sealed partial class PdfReader : IPdfResolver
             return outer.Resolve(value);
 
         for (int depth = 0; value.IsReference && depth < MaxResolveDepth; depth++)
-            value = GetObject(value.AsReference.Number);
+            value = GetObject(value.AsReference);
 
         return value.IsReference ? PdfValue.Null : value;
     }
@@ -199,7 +220,7 @@ public sealed partial class PdfReader : IPdfResolver
         {
             foreach (KeyValuePair<int, XrefEntry> entry in _entries)
             {
-                if (entry.Value.Type != XrefEntryType.Free && entry.Key > 0)
+                if (entry.Value.Type is XrefEntryType.Normal or XrefEntryType.Compressed && entry.Key > 0)
                     yield return entry.Key;
             }
         }
@@ -239,18 +260,109 @@ public sealed partial class PdfReader : IPdfResolver
     {
         bytes = default;
 
-        if (!_entries.TryGetValue(number, out XrefEntry entry) || entry.Type != XrefEntryType.Normal)
-            return false;
-
-        if (!TryLocate(number, entry, out int start))
-            return false;
-
-        int end = FindObjectEnd(start);
-        if (end <= start)
+        if (!TryGetObjectRange(number, out int start, out int end))
             return false;
 
         bytes = _memory[start..end];
         return true;
+    }
+
+    /// <summary>
+    /// Locates an indirect object's exact half-open byte range. Callers that validate delimiters
+    /// use the offsets as well as the payload so they can inspect the bytes immediately outside it.
+    /// </summary>
+    internal bool TryGetObjectRange(int number, out int start, out int end)
+    {
+        start = 0;
+        end = 0;
+
+        if (!_entries.TryGetValue(number, out XrefEntry entry) || entry.Type != XrefEntryType.Normal)
+            return false;
+
+        if (_options.StreamDecodePolicy is not null)
+        {
+            if (!_protectedObjectRanges.TryGetValue(number, out var range))
+                return false;
+
+            start = range.Start;
+            end = range.End;
+            return true;
+        }
+
+        if (!TryLocate(number, entry, out start))
+            return false;
+
+        end = FindObjectEnd(start);
+        if (end <= start)
+            return false;
+
+        return true;
+    }
+
+    /// <summary>
+    /// Returns the exact decoded bytes occupied by an object-stream slot. Compressed objects have
+    /// no physical <c>obj</c>/<c>endobj</c> wrapper, but byte-oriented conformance checks still need
+    /// the slot boundary declared by the object stream's offset table.
+    /// </summary>
+    internal bool TryGetCompressedObjectBytes(int number, out ReadOnlyMemory<byte> bytes)
+    {
+        bytes = default;
+        if (!_entries.TryGetValue(number, out XrefEntry entry) ||
+            entry.Type != XrefEntryType.Compressed)
+        {
+            return false;
+        }
+
+        ObjectStreamIndex? index = ReadObjectStream((int)entry.Offset);
+        if (index is null)
+            return false;
+
+        int slot = entry.Generation;
+        if (slot < 0 || slot >= index.Numbers.Length || index.Numbers[slot] != number)
+            return false;
+
+        int start = index.First + index.Offsets[slot];
+        int end = slot + 1 < index.Offsets.Length
+            ? index.First + index.Offsets[slot + 1]
+            : index.Data.Length;
+        if (start < 0 || start >= index.Data.Length || end <= start || end > index.Data.Length)
+            return false;
+
+        bytes = index.Data[start..end];
+        return true;
+    }
+
+    /// <summary>
+    /// Locates the exact half-open range occupied by a stream's encoded payload. A loaded,
+    /// unencrypted stream keeps that range as a slice of the reader's file buffer, which avoids
+    /// mistaking marker-like bytes inside the payload for PDF syntax.
+    /// </summary>
+    internal bool TryGetStreamPayloadRange(int number, out int start, out int end)
+    {
+        start = 0;
+        end = 0;
+
+        if (_options.StreamDecodePolicy is not null)
+        {
+            if (!_protectedStreamPayloadRanges.TryGetValue(number, out var range))
+                return false;
+
+            start = range.Start;
+            end = range.End;
+            return true;
+        }
+
+        PdfStream? stream = GetObject(number).AsStream;
+        if (stream is null ||
+            !MemoryMarshal.TryGetArray(stream.RawData, out ArraySegment<byte> payload) ||
+            !ReferenceEquals(payload.Array, _data))
+        {
+            return false;
+        }
+
+        start = payload.Offset;
+        end = start + payload.Count;
+        return start >= 0 && end >= start && end <= _data.Length;
     }
 
     private void Initialize()
@@ -258,7 +370,28 @@ public sealed partial class PdfReader : IPdfResolver
         ParseHeader();
         LoadCrossReferences();
         SetUpSecurity();
+        ValidateProtectedLiveObjects();
         ResolveCatalog();
+    }
+
+    private void ValidateProtectedLiveObjects()
+    {
+        if (_options.StreamDecodePolicy is null)
+            return;
+
+        foreach (KeyValuePair<int, XrefEntry> item in _entries)
+        {
+            if (item.Value.Type is XrefEntryType.Free or XrefEntryType.Unknown ||
+                (item.Value.Type == XrefEntryType.Compressed && IsEncrypted && _security is null))
+            {
+                continue;
+            }
+
+            _ = GetObject(item.Key);
+        }
+
+        ValidateProtectedProvenanceRanges();
+        ValidateProtectedLinearizationStructure();
     }
 
     private void ParseHeader()
@@ -348,9 +481,16 @@ public sealed partial class PdfReader : IPdfResolver
 
     private void ResolveCatalog()
     {
-        PdfDictionary? catalog = Trailer.GetDictionary(PdfNames.Root);
+        PdfValue root = Trailer.Get(PdfNames.Root);
+        if (_options.StreamDecodePolicy is not null && root.Kind != PdfValueKind.Dictionary)
+        {
+            throw new PdfFormatException(
+                "A protected document catalog shall be a dictionary, not a stream or other value.");
+        }
 
-        if (catalog is null || !catalog.ContainsKey(PdfNames.Pages))
+        PdfDictionary? catalog = root.AsDictionary;
+
+        if (_options.Recover && (catalog is null || !catalog.ContainsKey(PdfNames.Pages)))
         {
             PdfDictionary? scanned = ScanForCatalog();
             if (scanned is not null)
@@ -369,6 +509,13 @@ public sealed partial class PdfReader : IPdfResolver
 
         if (catalog is null)
             throw new PdfFormatException("The document has no catalog.");
+
+        if (_options.StreamDecodePolicy is not null &&
+            catalog.GetName(PdfNames.Type) != PdfNames.Catalog)
+        {
+            throw new PdfFormatException(
+                "A protected document catalog requires a Type entry whose value is Catalog.");
+        }
 
         if (catalog.GetName(PdfNames.Version) is { } declared &&
             PdfVersion.TryParse(declared.Value, out PdfVersion version) && version > Version)

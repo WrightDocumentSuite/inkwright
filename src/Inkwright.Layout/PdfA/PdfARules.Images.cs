@@ -4,10 +4,10 @@ namespace Inkwright.Layout;
 
 internal static partial class PdfARules
 {
-    /// <summary>Clause 6.2.4 of part 1, 6.2.8 of parts 2 and 3: images.</summary>
+    /// <summary>Clause 6.2.4 of part 1, 6.2.8 of parts 2 and 3, 6.2.7 of part 4: images.</summary>
     private static void CheckImages(PdfAContext context)
     {
-        string clause = context.Clause("6.2.4", "6.2.8.1");
+        string clause = context.Clause("6.2.4", "6.2.8.1", "6.2.7.1");
 
         foreach (PdfStream stream in context.Streams)
         {
@@ -31,7 +31,7 @@ internal static partial class PdfARules
         }
     }
 
-    /// <summary>Clause 6.2.5 to 6.2.7 of part 1, 6.2.9 of parts 2 and 3: external objects.</summary>
+    /// <summary>Clauses 6.2.5 to 6.2.7 of part 1, 6.2.9 of parts 2 and 3, 6.2.8 of part 4: XObjects.</summary>
     private static void CheckXObjects(PdfAContext context)
     {
         foreach (PdfStream stream in context.Streams)
@@ -39,7 +39,7 @@ internal static partial class PdfARules
             PdfDictionary xobject = stream.Dictionary;
             string? subtype = xobject.GetName(PdfNames.Subtype)?.Value;
 
-            if (subtype == "PS")
+            if (subtype == "PS" && context.Part != 4)
             {
                 context.Report(
                     context.Clause("6.2.7", "6.2.9.3"),
@@ -51,13 +51,22 @@ internal static partial class PdfARules
                 continue;
 
             if (xobject.ContainsKey(PdfName.Get("Ref")))
-                context.Report(context.Clause("6.2.6", "6.2.9.2"), "A form XObject is a reference XObject, which draws content from another file.");
+            {
+                context.Report(
+                    context.Clause("6.2.6", "6.2.9.2", "6.2.8.2"),
+                    "A form XObject is a reference XObject, which draws content from another file.");
+            }
 
             if (xobject.ContainsKey(PdfName.Get("OPI")))
-                context.Report(context.Clause("6.2.5", "6.2.9.1"), "A form XObject carries the OPI key.");
+            {
+                context.Report(
+                    context.Clause("6.2.5", "6.2.9.1", "6.2.8.1"),
+                    "A form XObject carries the OPI key.");
+            }
 
-            if (xobject.ContainsKey(PdfName.Get("PS")) ||
-                xobject.GetName(PdfName.Get("Subtype2"))?.Value == "PS")
+            if (context.Part != 4 &&
+                (xobject.ContainsKey(PdfName.Get("PS")) ||
+                 xobject.GetName(PdfName.Get("Subtype2"))?.Value == "PS"))
             {
                 context.Report(context.Clause("6.2.5", "6.2.9.1"), "A form XObject carries embedded PostScript.");
             }
@@ -65,8 +74,8 @@ internal static partial class PdfARules
     }
 
     /// <summary>
-    /// Clause 6.4 of part 1, 6.2.10 of parts 2 and 3. Part 1 forbids transparency outright; parts 2
-    /// and 3 allow it but insist that something says which colour space the blending happens in.
+    /// Clause 6.4 of part 1, 6.2.10 of parts 2 and 3, 6.2.9 of part 4. Part 1 forbids transparency;
+    /// later parts allow it but insist that something says which colour space blending happens in.
     /// </summary>
     private static void CheckTransparency(PdfAContext context)
     {
@@ -77,11 +86,12 @@ internal static partial class PdfARules
         }
 
         bool intent = context.Document.Catalog.Get(PdfName.Get("OutputIntents")).AsArray is { Count: > 0 };
+        string clause = context.Clause("6.4", "6.2.10", "6.2.9");
 
         foreach (PdfDictionary dictionary in context.Dictionaries)
         {
             if (dictionary.GetName(PdfName.Get("BM")) is { } blend && !IsKnownBlendMode(blend.Value))
-                context.Report("6.2.10", $"The blend mode {blend.Value} is not one ISO 32000-1 defines.");
+                context.Report(clause, $"The blend mode {blend.Value} is not one ISO 32000 defines.");
         }
 
         if (intent)
@@ -96,7 +106,7 @@ internal static partial class PdfARules
             if (group?.ContainsKey(PdfName.Get("CS")) != true)
             {
                 context.Report(
-                    "6.2.10",
+                    clause,
                     $"Page {i + 1} uses transparency, and with no output intent the page group must " +
                     "name the blending colour space itself.");
             }

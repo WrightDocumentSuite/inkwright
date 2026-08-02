@@ -61,11 +61,8 @@ internal static class PdfMacSignatureBuilder
 
     private static byte[]? Rebuild(byte[] signature, byte[] token)
     {
-        int end = signature.Length;
-        while (end > 0 && signature[end - 1] == 0)
-            end--;
-
-        var outer = new AsnReader(signature.AsMemory(0, end), AsnEncodingRules.BER);
+        var outer = new AsnReader(
+            PdfMacSignatureAttribute.ReadPaddedCmsValue(signature), AsnEncodingRules.BER);
         AsnReader info = outer.ReadSequence();
 
         if (info.ReadObjectIdentifier() != SignedDataOid)
@@ -162,11 +159,8 @@ internal static class PdfMacSignatureBuilder
 
     private static AsnReader? FirstSigner(byte[] signature)
     {
-        int end = signature.Length;
-        while (end > 0 && signature[end - 1] == 0)
-            end--;
-
-        var outer = new AsnReader(signature.AsMemory(0, end), AsnEncodingRules.BER);
+        var outer = new AsnReader(
+            PdfMacSignatureAttribute.ReadPaddedCmsValue(signature), AsnEncodingRules.BER);
         AsnReader info = outer.ReadSequence();
 
         if (info.ReadObjectIdentifier() != SignedDataOid)

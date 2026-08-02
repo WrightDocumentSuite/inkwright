@@ -113,49 +113,53 @@ public static class PdfImageReader
         switch (codec.Value)
         {
             case "DCTDecode" or "DCT":
-            {
-                JpegImage jpeg = JpegDecoder.Decode(data.Span);
-                return (jpeg.Samples, 8, JpegSpace(jpeg, space));
-            }
+                {
+                    PdfDictionary? parms = Parms(dictionary);
+                    int? colorTransform = parms?.ContainsKey(PdfName.Get("ColorTransform")) == true
+                        ? (int)parms.GetInteger(PdfName.Get("ColorTransform"))
+                        : null;
+                    JpegImage jpeg = JpegDecoder.Decode(data.Span, colorTransform);
+                    return (jpeg.Samples, 8, JpegSpace(jpeg, space));
+                }
 
             case "CCITTFaxDecode" or "CCF":
-            {
-                PdfDictionary parms = Parms(dictionary) ?? new PdfDictionary(0);
+                {
+                    PdfDictionary parms = Parms(dictionary) ?? new PdfDictionary(0);
 
-                try
-                {
-                    return (CcittFaxDecoder.Decode(data.Span, CcittFaxDecoder.Read(parms, width, height)), 1, space);
+                    try
+                    {
+                        return (CcittFaxDecoder.Decode(data.Span, CcittFaxDecoder.Read(parms, width, height)), 1, space);
+                    }
+                    catch (InvalidDataException exception)
+                    {
+                        throw new NotSupportedException(
+                            $"The CCITT fax data could not be decoded: {exception.Message}", exception);
+                    }
                 }
-                catch (InvalidDataException exception)
-                {
-                    throw new NotSupportedException(
-                        $"The CCITT fax data could not be decoded: {exception.Message}", exception);
-                }
-            }
 
             case "JBIG2Decode":
-            {
-                PdfDictionary? parms = Parms(dictionary);
-                ReadOnlyMemory<byte> globals = parms?.GetStream(PdfName.Get("JBIG2Globals")) is { } shared
-                    ? shared.Decode()
-                    : ReadOnlyMemory<byte>.Empty;
-
-                try
                 {
-                    // JBIG2 sets a bit where the pixel is black, which is the reverse of how a
-                    // one-bit image is otherwise read, so the rows come back inverted.
-                    byte[] rows = Jbig2.Jbig2Decoder.Decode(data, globals, width, height);
-                    for (int i = 0; i < rows.Length; i++)
-                        rows[i] = (byte)~rows[i];
+                    PdfDictionary? parms = Parms(dictionary);
+                    ReadOnlyMemory<byte> globals = parms?.GetStream(PdfName.Get("JBIG2Globals")) is { } shared
+                        ? shared.Decode()
+                        : ReadOnlyMemory<byte>.Empty;
 
-                    return (rows, 1, space);
+                    try
+                    {
+                        // JBIG2 sets a bit where the pixel is black, which is the reverse of how a
+                        // one-bit image is otherwise read, so the rows come back inverted.
+                        byte[] rows = Jbig2.Jbig2Decoder.Decode(data, globals, width, height);
+                        for (int i = 0; i < rows.Length; i++)
+                            rows[i] = (byte)~rows[i];
+
+                        return (rows, 1, space);
+                    }
+                    catch (InvalidDataException exception)
+                    {
+                        throw new NotSupportedException(
+                            $"The JBIG2 data could not be decoded: {exception.Message}", exception);
+                    }
                 }
-                catch (InvalidDataException exception)
-                {
-                    throw new NotSupportedException(
-                        $"The JBIG2 data could not be decoded: {exception.Message}", exception);
-                }
-            }
 
             default:
                 throw new NotSupportedException(

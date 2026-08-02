@@ -117,7 +117,7 @@ using PdfDocument opened = PdfDocument.Load(file, new PdfReadOptions
 });
 ```
 
-256-bit AES is written with crypto filters (`adbe.pkcs7.s5`, `Adobe.PubSec`); the file key is derived from the twenty-byte seed and recipient envelope bytes as §7.6.5.3 requires. A certificate the document was not encrypted for will not open it; with recovery enabled that is `PdfPasswordException`, not a silent pile of ciphertext.
+256-bit AES is written with crypto filters (`adbe.pkcs7.s5`, `Adobe.PubSec`); the file key is derived from the twenty-byte seed and recipient envelope bytes as §7.6.5.3 requires. On read, the legacy `adbe.pkcs7.s3` and `s4` handlers retain their declared 40–128-bit RC4 key length (`V = 1` is always 40 bit), so old certificate-encrypted archives remain accessible without weakening newly written files. A certificate the document was not encrypted for will not open it; with recovery enabled that is `PdfPasswordException`, not a silent pile of ciphertext.
 
 ### Integrity Protection
 
@@ -217,6 +217,11 @@ The `BI … ID … EI` construct (§8.9.7) has no length in stream syntax, and h
 PDF 2.0 closed the hole with key `L` (short for `Length`), which "shall be present on all inline images". The reader trusts it first: if the declared length fits in the stream and leads exactly to `EI`, data is taken by it. If it does not match, the file is already broken and the old heuristic applies instead of truncating by a number that obviously lies. An unencoded image without `L` is still measured by its own geometry.
 
 A separate subtlety from the same section: usually exactly one whitespace character follows `ID`, but if the last filter in the chain is `ASCIIHexDecode` or `ASCII85Decode`, there may be any amount of whitespace, and it is not part of the data.
+
+Abbreviated inline-image names are expanded by context. `/I` is the `Interpolate` key in the image
+dictionary, but the same `/I` means `Indexed` when it appears as a colour-space value (including
+inside an array). Treating both positions alike changes palette images into a boolean option and
+silently produces the wrong pixels.
 
 ## Two Ways to Save
 

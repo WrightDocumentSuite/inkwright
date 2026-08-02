@@ -16,17 +16,133 @@ public static class Predictor
     /// <param name="columns">The number of samples per row.</param>
     /// <returns>The unpredicted data, or the input when no predictor applies.</returns>
     public static byte[] Undo(ReadOnlySpan<byte> data, int predictor, int colors, int bitsPerComponent, int columns)
-    {
-        if (predictor <= 1 || data.IsEmpty)
-            return data.ToArray();
+        => UndoCore(
+            data,
+            predictor,
+            colors,
+            bitsPerComponent,
+            columns,
+            PdfFilterLimits.Cap,
+            strict: false,
+            out _,
+            out _);
 
-        colors = Math.Clamp(colors, 1, 32);
+    /// <summary>Reverses a predictor without allocating more than the supplied output bound.</summary>
+    internal static byte[] Undo(
+        ReadOnlySpan<byte> data,
+        int predictor,
+        int colors,
+        int bitsPerComponent,
+        int columns,
+        int maxDecodedBytes,
+        out bool limitExceeded,
+        out bool invalidData) =>
+        UndoCore(
+            data,
+            predictor,
+            colors,
+            bitsPerComponent,
+            columns,
+            maxDecodedBytes,
+            strict: true,
+            out limitExceeded,
+            out invalidData);
+
+    private static byte[] UndoCore(
+        ReadOnlySpan<byte> data,
+        int predictor,
+        int colors,
+        int bitsPerComponent,
+        int columns,
+        int maxDecodedBytes,
+        bool strict,
+        out bool limitExceeded,
+        out bool invalidData)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxDecodedBytes);
+        limitExceeded = false;
+        invalidData = false;
+
+        if (predictor <= 1 || data.IsEmpty)
+        {
+            if (data.Length > maxDecodedBytes)
+            {
+                limitExceeded = true;
+                return data[..maxDecodedBytes].ToArray();
+            }
+
+            return data.ToArray();
+        }
+
+        colors = Math.Max(1, colors);
         bitsPerComponent = bitsPerComponent switch { 1 or 2 or 4 or 8 or 16 => bitsPerComponent, _ => 8 };
         columns = Math.Max(1, columns);
 
-        return predictor == 2
-            ? UndoTiff(data, colors, bitsPerComponent, columns)
-            : UndoPng(data, colors, bitsPerComponent, columns);
+        if (predictor == 2)
+        {
+            if (data.Length > maxDecodedBytes)
+            {
+                limitExceeded = true;
+                return data[..maxDecodedBytes].ToArray();
+            }
+
+            long samplesPerRow = (long)columns * colors;
+            if (samplesPerRow > (maxDecodedBytes * 8L) / bitsPerComponent)
+            {
+                limitExceeded = true;
+                return [];
+            }
+
+            if (samplesPerRow > int.MaxValue)
+            {
+                limitExceeded = true;
+                return [];
+            }
+
+            int tiffRowLength = (int)(((samplesPerRow * bitsPerComponent) + 7) / 8);
+            if (strict && data.Length % tiffRowLength != 0)
+            {
+                invalidData = true;
+                return [];
+            }
+
+            return UndoTiff(
+                data,
+                colors,
+                bitsPerComponent,
+                (int)samplesPerRow,
+                tiffRowLength);
+        }
+
+        long samples = (long)columns * colors;
+        if (samples > (maxDecodedBytes * 8L) / bitsPerComponent)
+        {
+            limitExceeded = true;
+            return [];
+        }
+
+        long rowLengthValue = ((samples * bitsPerComponent) + 7) / 8;
+        long stride = rowLengthValue + 1;
+        long rows = data.Length / stride;
+        long tail = data.Length - (rows * stride);
+        long outputLength = (rows + (tail > 1 ? 1 : 0)) * rowLengthValue;
+
+        if (rowLengthValue >= int.MaxValue || outputLength > maxDecodedBytes || outputLength > int.MaxValue)
+        {
+            limitExceeded = true;
+            return [];
+        }
+
+        int rowLength = (int)rowLengthValue;
+        int bytesPerPixel = Math.Max(1, (int)((((long)colors * bitsPerComponent) + 7) / 8));
+        int pngStride = rowLength + 1;
+        if (strict && data.Length % pngStride != 0)
+        {
+            invalidData = true;
+            return [];
+        }
+
+        return UndoPng(data, rowLength, bytesPerPixel, strict, out invalidData);
     }
 
     /// <summary>
@@ -57,27 +173,86 @@ public static class Predictor
         return output;
     }
 
-    private static byte[] UndoTiff(ReadOnlySpan<byte> data, int colors, int bitsPerComponent, int columns)
+    private static byte[] UndoTiff(
+        ReadOnlySpan<byte> data,
+        int colors,
+        int bitsPerComponent,
+        int samplesPerRow,
+        int rowLength)
     {
         byte[] output = data.ToArray();
-        if (bitsPerComponent != 8)
-            return output; // Sub-byte TIFF differencing is rare enough to leave untouched.
-
-        int rowLength = columns * colors;
-        for (int offset = 0; offset + rowLength <= output.Length; offset += rowLength)
+        for (int offset = 0; rowLength > 0 && offset <= output.Length - rowLength; offset += rowLength)
         {
             Span<byte> row = output.AsSpan(offset, rowLength);
-            for (int i = colors; i < rowLength; i++)
-                row[i] += row[i - colors];
+            switch (bitsPerComponent)
+            {
+                case 8:
+                    for (int sample = colors; sample < samplesPerRow; sample++)
+                        row[sample] += row[sample - colors];
+                    break;
+
+                case 16:
+                    for (int sample = colors; sample < samplesPerRow; sample++)
+                    {
+                        int position = sample * 2;
+                        int leftPosition = (sample - colors) * 2;
+                        int current = (row[position] << 8) | row[position + 1];
+                        int left = (row[leftPosition] << 8) | row[leftPosition + 1];
+                        int restored = (current + left) & 0xFFFF;
+                        row[position] = (byte)(restored >> 8);
+                        row[position + 1] = (byte)restored;
+                    }
+
+                    break;
+
+                default:
+                    int mask = (1 << bitsPerComponent) - 1;
+                    for (int sample = colors; sample < samplesPerRow; sample++)
+                    {
+                        int current = PackedSample(row, sample, bitsPerComponent);
+                        int left = PackedSample(row, sample - colors, bitsPerComponent);
+                        SetPackedSample(
+                            row,
+                            sample,
+                            bitsPerComponent,
+                            (current + left) & mask);
+                    }
+
+                    break;
+            }
         }
 
         return output;
     }
 
-    private static byte[] UndoPng(ReadOnlySpan<byte> data, int colors, int bitsPerComponent, int columns)
+    private static int PackedSample(ReadOnlySpan<byte> row, int sample, int bitsPerComponent)
     {
-        int bytesPerPixel = Math.Max(1, colors * bitsPerComponent / 8);
-        int rowLength = ((columns * colors * bitsPerComponent) + 7) / 8;
+        long bit = (long)sample * bitsPerComponent;
+        int shift = 8 - bitsPerComponent - ((int)bit & 7);
+        return (row[(int)(bit >> 3)] >> shift) & ((1 << bitsPerComponent) - 1);
+    }
+
+    private static void SetPackedSample(
+        Span<byte> row,
+        int sample,
+        int bitsPerComponent,
+        int value)
+    {
+        long bit = (long)sample * bitsPerComponent;
+        int index = (int)(bit >> 3);
+        int shift = 8 - bitsPerComponent - ((int)bit & 7);
+        int mask = ((1 << bitsPerComponent) - 1) << shift;
+        row[index] = (byte)((row[index] & ~mask) | ((value << shift) & mask));
+    }
+
+    private static byte[] UndoPng(
+        ReadOnlySpan<byte> data,
+        int rowLength,
+        int bytesPerPixel,
+        bool strict,
+        out bool invalidData)
+    {
+        invalidData = false;
         int stride = rowLength + 1;
         int rows = data.Length / stride;
 
@@ -137,7 +312,13 @@ public static class Predictor
                     break;
 
                 default:
-                    // Unknown filter byte: treat the row as unfiltered rather than dropping it.
+                    if (strict)
+                    {
+                        invalidData = true;
+                        return output;
+                    }
+
+                    // Tolerant public decoding treats an unknown tag as an unfiltered row.
                     break;
             }
 

@@ -113,11 +113,18 @@ public class CorpusRoundTripTests
         if (SampleSize == 7807)
         {
             Assert.Equal(7800, opened);
+            Assert.Equal(7555, rewritten);
+            Assert.Equal(57249, pages);
             Assert.Equal(5, unreadable.Count);
             Assert.Equal(2, empty);
             Assert.Equal(0, readFailures);
             Assert.Equal(SampleSize, opened + unreadable.Count + empty + readFailures);
         }
+
+        WriteMetric(
+            "corpus-roundtrip files={0} opened={1} rewritten={2} pages={3} rejected={4} " +
+            "empty={5} read-failures={6} failures={7}",
+            SampleSize, opened, rewritten, pages, unreadable.Count, empty, readFailures, failures.Count);
     }
 
     [Fact]
@@ -232,6 +239,16 @@ public class CorpusRoundTripTests
         Assert.True(pages > 500, $"Only {pages} pages had content.");
         Assert.True(operations > 100_000, $"Only {operations} operations were parsed.");
         Assert.True(failures.Count == 0, Summarize(failures, pages));
+
+        if (SampleSize == 7807)
+        {
+            Assert.Equal(694, pages);
+            Assert.Equal(386535, operations);
+        }
+
+        WriteMetric(
+            "corpus-content sampled-files=400 pages={0} operations={1} failures={2}",
+            pages, operations, failures.Count);
     }
 
     [Fact]
@@ -259,7 +276,15 @@ public class CorpusRoundTripTests
             }
         }
 
-        Assert.True(recovered > 100, $"Only {recovered} of 200 damaged files survived.");
+        Assert.Equal(164, recovered);
+
+        WriteMetric("damaged-input trials=200 recovered={0}", recovered);
+    }
+
+    internal static void WriteMetric(string format, params object?[] arguments)
+    {
+        TestContext.Current.TestOutputHelper?.WriteLine(
+            "INKWRIGHT_METRIC " + string.Format(CultureInfo.InvariantCulture, format, arguments));
     }
 
     internal static string Describe(string path)

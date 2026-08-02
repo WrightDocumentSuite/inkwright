@@ -357,8 +357,13 @@ internal static class PublicKeySecurityHandler
         if (version < 4)
         {
             int keyLength = (int)encrypt.GetInteger(PdfName.Get("Length"), 40);
+            if (version == 1)
+                keyLength = 40;
+            else if (keyLength is < 40 or > 128 || keyLength % 8 != 0)
+                keyLength = 40;
+
             return (CryptMethod.Rc4, CryptMethod.Rc4, CryptMethod.Rc4,
-                keyLength >= 128 ? 128 : 128, new Dictionary<PdfName, CryptMethod>());
+                keyLength, new Dictionary<PdfName, CryptMethod>());
         }
 
         PdfDictionary? filters = encrypt.GetDictionary(PdfNames.CF);

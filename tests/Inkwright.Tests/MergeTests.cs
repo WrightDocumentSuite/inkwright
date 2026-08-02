@@ -90,6 +90,12 @@ public class MergeTests
         second.Attachments.Add("data.xml", "<second/>"u8.ToArray());
 
         using PdfDocument merged = PdfDocument.Merge(first, second);
+        PdfArray rawSpecifications = merged.Catalog.GetDictionary(PdfNames.Names)!
+            .GetDictionary(PdfNames.EmbeddedFiles)!
+            .GetArray(PdfNames.Names)!;
+        for (int i = 1; i < rawSpecifications.Count; i += 2)
+            Assert.True(rawSpecifications[i].IsReference);
+
         using PdfDocument reloaded = PdfDocument.Load(merged.ToArray());
 
         Assert.Equal(["data.xml", "data.xml (2)"], reloaded.Attachments.Names.Order(StringComparer.Ordinal));

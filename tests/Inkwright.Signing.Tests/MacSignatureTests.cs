@@ -1,3 +1,4 @@
+using System.Formats.Asn1;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
@@ -75,6 +76,39 @@ public class MacSignatureTests
         Assert.False(integrity.MatchesContent);
         Assert.False(integrity.IsVerified);
         Assert.Contains("signature", integrity.VerificationNote!, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void DistinguishesCmsBytesEndingInZeroFromPdfContentsPadding()
+    {
+        using X509Certificate2 certificate = CreateCertificate();
+        var options = new PdfSignatureOptions { Certificate = certificate };
+        byte[] cms = CmsBuilder.Build(
+            "covered"u8.ToArray(), options, new CertificateSigner(certificate, []));
+        byte[] signatureValue = PdfMacSignatureBuilder.ReadSignatureValue(cms);
+
+        Assert.NotEmpty(signatureValue);
+        int signatureAt = cms.AsSpan().IndexOf(signatureValue);
+        Assert.True(signatureAt >= 0);
+
+        // A raw RSA signature is the final value in this CMS. Ending it in zero keeps the ASN.1
+        // structure valid and models the random one-in-256 case that used to be mistaken for PDF
+        // /Contents padding.
+        cms[signatureAt + signatureValue.Length - 1] = 0;
+        signatureValue[^1] = 0;
+        Assert.Equal(0, cms[^1]);
+
+        byte[] paddedCms = [.. cms, .. new byte[32]];
+
+        var tokenWriter = new AsnWriter(AsnEncodingRules.DER);
+        tokenWriter.WriteOctetString([0]);
+        byte[] token = tokenWriter.Encode();
+        byte[] attached = PdfMacSignatureBuilder.Attach(paddedCms, token);
+        byte[] paddedAttached = [.. attached, .. new byte[32]];
+
+        Assert.Equal(0, attached[^1]);
+        Assert.Equal(signatureValue, PdfMacSignatureBuilder.ReadSignatureValue(paddedAttached));
+        Assert.Equal(token, PdfMacSignatureAttribute.Extract(paddedAttached));
     }
 
     [Fact]

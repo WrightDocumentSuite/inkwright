@@ -35,15 +35,27 @@ internal static class PdfMacSignatureAttribute
         }
     }
 
+    /// <summary>
+    /// Separates one complete CMS value from the zero padding of a fixed-width PDF string.
+    /// </summary>
+    /// <remarks>
+    /// The ASN.1 length identifies the boundary. Trimming zero bytes is unsafe because a valid CMS
+    /// value may itself end in zero, including the last byte of a signature or a BER end marker.
+    /// </remarks>
+    internal static ReadOnlyMemory<byte> ReadPaddedCmsValue(ReadOnlyMemory<byte> signature)
+    {
+        var envelope = new AsnReader(signature, AsnEncodingRules.BER);
+        ReadOnlyMemory<byte> encoded = envelope.ReadEncodedValue();
+
+        if (signature.Span[encoded.Length..].IndexOfAnyExcept((byte)0) >= 0)
+            throw new AsnContentException("CMS is followed by non-zero data.");
+
+        return encoded;
+    }
+
     private static byte[]? Search(byte[] signature)
     {
-        // A signature is padded with zeros to the space reserved for it, which the reader must not
-        // try to parse.
-        int end = signature.Length;
-        while (end > 0 && signature[end - 1] == 0)
-            end--;
-
-        var outer = new AsnReader(signature.AsMemory(0, end), AsnEncodingRules.BER);
+        var outer = new AsnReader(ReadPaddedCmsValue(signature), AsnEncodingRules.BER);
         AsnReader info = outer.ReadSequence();
 
         if (info.ReadObjectIdentifier() != SignedDataOid)

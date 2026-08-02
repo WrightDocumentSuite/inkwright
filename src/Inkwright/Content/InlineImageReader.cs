@@ -36,8 +36,8 @@ internal static class InlineImageReader
             if (token != PdfTokenType.Name)
                 continue;
 
-            PdfName key = Expand(PdfName.Get(parser.TokenName()));
-            dictionary.Set(key, Expand(parser.ParseValue()));
+            PdfName key = ExpandKey(PdfName.Get(parser.TokenName()));
+            dictionary.Set(key, ExpandValue(parser.ParseValue()));
         }
 
         int dataStart = parser.Position;
@@ -74,8 +74,8 @@ internal static class InlineImageReader
         return true;
     }
 
-    /// <summary>Expands the abbreviated keys and values §8.9.7 allows inside an inline image.</summary>
-    private static PdfName Expand(PdfName name) => name.Value switch
+    /// <summary>Expands the abbreviated dictionary keys in ISO 32000-2 Table 91.</summary>
+    private static PdfName ExpandKey(PdfName name) => name.Value switch
     {
         "BPC" => PdfNames.BitsPerComponent,
         "CS" => PdfNames.ColorSpace,
@@ -87,9 +87,19 @@ internal static class InlineImageReader
         "I" => PdfNames.Interpolate,
         "W" => PdfNames.Width,
         "L" => PdfNames.Length,
+        _ => name,
+    };
+
+    /// <summary>
+    /// Expands the abbreviated name values in ISO 32000-2 Table 92. This is deliberately separate
+    /// from the key table: <c>/I</c> means Interpolate as a key but Indexed as a value.
+    /// </summary>
+    private static PdfName ExpandValue(PdfName name) => name.Value switch
+    {
         "G" => PdfNames.DeviceGray,
         "RGB" => PdfNames.DeviceRGB,
         "CMYK" => PdfNames.DeviceCMYK,
+        "I" => PdfNames.Indexed,
         "AHx" => PdfNames.ASCIIHexDecode,
         "A85" => PdfNames.ASCII85Decode,
         "LZW" => PdfNames.LZWDecode,
@@ -100,10 +110,10 @@ internal static class InlineImageReader
         _ => name,
     };
 
-    private static PdfValue Expand(PdfValue value)
+    private static PdfValue ExpandValue(PdfValue value)
     {
         if (value.AsName is { } name)
-            return PdfValue.Name(Expand(name));
+            return PdfValue.Name(ExpandValue(name));
 
         if (value.AsArray is not { } array)
             return value;
@@ -111,7 +121,7 @@ internal static class InlineImageReader
         for (int i = 0; i < array.Count; i++)
         {
             if (array[i].AsName is { } element)
-                array[i] = PdfValue.Name(Expand(element));
+                array[i] = PdfValue.Name(ExpandValue(element));
         }
 
         return value;

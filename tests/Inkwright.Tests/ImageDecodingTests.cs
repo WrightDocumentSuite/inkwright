@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Runtime.InteropServices;
 using Inkwright.Cos;
 using Inkwright.Images;
 using Xunit;
@@ -158,6 +159,94 @@ public class ImageDecodingTests
             Assert.Equal(133, image.Pixels[i * 4]);
     }
 
+    /// <summary>
+    /// ISO 32000-2 Table 13 lets DecodeParms disable the default YCbCr transform when a JPEG has
+    /// no Adobe APP14 marker. The same three decoded planes therefore have to produce different
+    /// RGB samples for ColorTransform 0 and 1.
+    /// </summary>
+    [Fact]
+    public void HonoursTheDctColorTransformWhenThereIsNoAdobeMarker()
+    {
+        byte[] jpeg = MinimalJpeg(components: 3);
+        PdfStream raw = Image(jpeg, 8, 8, "DeviceRGB", 8);
+        raw.Dictionary.Set(PdfNames.Filter, PdfValue.Name(PdfNames.DCTDecode));
+        raw.Dictionary.Set(PdfNames.DecodeParms, PdfValue.Dictionary(new PdfDictionary
+        {
+            [PdfName.Get("ColorTransform")] = PdfValue.Integer(0),
+        }));
+
+        PdfStream transformed = Image(jpeg, 8, 8, "DeviceRGB", 8);
+        transformed.Dictionary.Set(PdfNames.Filter, PdfValue.Name(PdfNames.DCTDecode));
+        transformed.Dictionary.Set(PdfNames.DecodeParms, PdfValue.Dictionary(new PdfDictionary
+        {
+            [PdfName.Get("ColorTransform")] = PdfValue.Integer(1),
+        }));
+
+        PdfImageData rawImage = PdfImageReader.Decode(raw);
+        PdfImageData transformedImage = PdfImageReader.Decode(transformed);
+
+        Assert.Equal(new byte[] { 133, 133, 133, 255 }, rawImage.Pixels[..4]);
+        Assert.Equal(new byte[] { 140, 128, 142, 255 }, transformedImage.Pixels[..4]);
+    }
+
+    [Fact]
+    public void HonoursTheFourComponentDctColorTransformWhenThereIsNoAdobeMarker()
+    {
+        byte[] jpeg = MinimalJpeg(components: 4);
+
+        JpegImage raw = JpegDecoder.Decode(jpeg, colorTransform: 0);
+        JpegImage transformed = JpegDecoder.Decode(jpeg, colorTransform: 1);
+
+        Assert.Equal(new byte[] { 133, 133, 133, 133 }, raw.Samples[..4]);
+        Assert.Equal(new byte[] { 140, 128, 142, 133 }, transformed.Samples[..4]);
+    }
+
+    /// <summary>
+    /// ISO 32000-2 Table 13 gives an Adobe APP14 marker precedence over DecodeParms. Transform 0
+    /// identifies RGB or CMYK samples, transform 1 identifies YCbCr, and transform 2 identifies
+    /// YCCK. Four-component Adobe samples are inverted after either marker-directed path.
+    /// </summary>
+    [Theory]
+    [InlineData(3, 0, 1, 133, 133, 133, -1)]
+    [InlineData(3, 1, 0, 140, 128, 142, -1)]
+    [InlineData(4, 0, 1, 122, 122, 122, 122)]
+    [InlineData(4, 2, 0, 115, 127, 113, 122)]
+    public void AdobeMarkerOverridesThePdfDctColorTransform(
+        int components,
+        int adobeTransform,
+        int pdfTransform,
+        int first,
+        int second,
+        int third,
+        int fourth)
+    {
+        JpegImage image = JpegDecoder.Decode(
+            MinimalJpeg(components, adobeTransform), pdfTransform);
+
+        byte[] expected = components == 4
+            ? [checked((byte)first), checked((byte)second), checked((byte)third), checked((byte)fourth)]
+            : [checked((byte)first), checked((byte)second), checked((byte)third)];
+        Assert.Equal(expected, image.Samples[..components]);
+    }
+
+    [Theory]
+    [InlineData(3, 140, 128, 142, -1)]
+    [InlineData(4, 133, 133, 133, 133)]
+    public void UsesTheComponentCountDefaultWhenNoDctColorTransformIsSpecified(
+        int components,
+        int first,
+        int second,
+        int third,
+        int fourth)
+    {
+        JpegImage image = JpegDecoder.Decode(MinimalJpeg(components));
+
+        byte[] expected = components == 4
+            ? [checked((byte)first), checked((byte)second), checked((byte)third), checked((byte)fourth)]
+            : [checked((byte)first), checked((byte)second), checked((byte)third)];
+        Assert.Equal(expected, image.Samples[..components]);
+    }
+
     [Fact]
     public void RefusesTheCodecsItDoesNotDecode()
     {
@@ -244,7 +333,7 @@ public class ImageDecodingTests
     /// ones, each Huffman table holds a single one-bit code, and the whole scan is one byte:
     /// the code for a magnitude of six, the six bits of the value forty, and the end-of-block code.
     /// </summary>
-    private static byte[] MinimalJpeg()
+    private static byte[] MinimalJpeg(int components = 1, int? adobeTransform = null)
     {
         using var file = new MemoryStream();
         file.Write([0xFF, 0xD8]);
@@ -255,14 +344,35 @@ public class ImageDecodingTests
 
         Segment(file, 0xDB, quantization);
 
-        byte[] frame = [8, 0, 8, 0, 8, 1, 1, 0x11, 0];
-        Segment(file, 0xC0, frame);
+        if (adobeTransform is not null)
+        {
+            byte[] adobe =
+            [
+                .. "Adobe"u8,
+                0x00, 0x64, // version 100
+                0x00, 0x00, // flags 0
+                0x00, 0x00, // flags 1
+                checked((byte)adobeTransform.Value),
+            ];
+            Segment(file, 0xEE, adobe);
+        }
+
+        var frame = new List<byte> { 8, 0, 8, 0, 8, checked((byte)components) };
+        for (int component = 1; component <= components; component++)
+            frame.AddRange([checked((byte)component), 0x11, 0]);
+        Segment(file, 0xC0, CollectionsMarshal.AsSpan(frame));
 
         Segment(file, 0xC4, Table(0x00, value: 6));
         Segment(file, 0xC4, Table(0x10, value: 0));
 
-        Segment(file, 0xDA, [1, 1, 0x00, 0, 63, 0]);
-        file.Write([0b0101_0000]);
+        var scan = new List<byte> { checked((byte)components) };
+        for (int component = 1; component <= components; component++)
+            scan.AddRange([checked((byte)component), 0x00]);
+        scan.AddRange([0, 63, 0]);
+        Segment(file, 0xDA, CollectionsMarshal.AsSpan(scan));
+
+        for (int component = 0; component < components; component++)
+            file.WriteByte(0b0101_0000);
         file.Write([0xFF, 0xD9]);
 
         return file.ToArray();

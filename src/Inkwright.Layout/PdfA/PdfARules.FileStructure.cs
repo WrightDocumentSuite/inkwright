@@ -95,8 +95,26 @@ internal static partial class PdfARules
 
     private static void CheckTrailer(PdfAContext context)
     {
-        if (context.Document.Trailer.GetArray(PdfName.Get("ID")) is not { Count: 2 })
-            context.Report("6.1.3", "The trailer has no two-part ID, so the file cannot be identified across copies.");
+        // Directness is required by base PDF only when an Encrypt entry is present; PDF/A forbids
+        // Encrypt outright. Validate the resolved values so otherwise valid indirect IDs are not
+        // rejected merely because of how the objects are stored.
+        PdfArray? identifiers = context.Document.Trailer.GetArray(PdfNames.ID);
+        if (identifiers is not { Count: 2 } ||
+            identifiers.Get(0).Kind != PdfValueKind.String ||
+            identifiers.Get(1).Kind != PdfValueKind.String)
+        {
+            context.Report(
+                "6.1.3",
+                "The trailer ID shall be an array of exactly two byte strings.");
+        }
+        else if (context.Part == 4 &&
+                 (identifiers.Get(0).AsStringBytes.Length < 16 ||
+                  identifiers.Get(1).AsStringBytes.Length < 16))
+        {
+            context.Report(
+                "6.1.3",
+                "Each entry in a PDF 2.0 trailer ID shall be a byte string of at least 16 bytes.");
+        }
 
         if (context.Part == 4)
         {
@@ -182,16 +200,24 @@ internal static partial class PdfARules
     /// </summary>
     private static void CheckStreamDictionaries(PdfAContext context)
     {
-        foreach (PdfStream stream in context.Streams)
+        foreach (PdfStream stream in context.FileStreams)
         {
             PdfDictionary dictionary = stream.Dictionary;
+
+            if (!context.IsIndirectOnly(dictionary))
+            {
+                context.Report(
+                    context.Clause("6.1.7", "6.1.7", "6.1.6"),
+                    "A stream is embedded directly in another object instead of being stored as " +
+                    "an indirect object.");
+            }
 
             foreach (string key in (string[])["F", "FFilter", "FDecodeParms", "FDecodeParams"])
             {
                 if (dictionary.ContainsKey(PdfName.Get(key)))
                 {
                     context.Report(
-                        context.Clause("6.1.7", "6.1.7.1"),
+                        context.Clause("6.1.7", "6.1.7.1", "6.1.6.1"),
                         $"A stream dictionary carries {key}, which points at data outside the file.");
                 }
             }
@@ -202,9 +228,9 @@ internal static partial class PdfARules
 
     private static void CheckFilters(PdfAContext context, PdfDictionary dictionary)
     {
-        string clause = context.Clause("6.1.10", "6.1.7.2");
+        string clause = context.Clause("6.1.10", "6.1.7.2", "6.1.6.2");
 
-        foreach (string filter in FilterNames(dictionary, PdfNames.Filter))
+        foreach ((int filterIndex, string filter) in FilterEntries(dictionary, PdfNames.Filter))
         {
             if (filter is "LZWDecode" or "LZW")
             {
@@ -212,8 +238,18 @@ internal static partial class PdfARules
                 continue;
             }
 
-            if (filter == "Crypt" && !IsIdentityCrypt(dictionary))
-                context.Report(clause, "A stream uses a Crypt filter that is not Identity.");
+            if (filter == "Crypt")
+            {
+                if (filterIndex != 0)
+                {
+                    context.Report(
+                        clause,
+                        "A stream uses a Crypt filter after another filter; ISO 32000 requires Crypt to be first.");
+                }
+
+                if (!IsIdentityCrypt(dictionary, filterIndex))
+                    context.Report(clause, "A stream uses a Crypt filter that is not Identity.");
+            }
 
             if (context.Part > 1 && !Known(filter))
                 context.Report(clause, $"A stream uses the filter {filter}, which ISO 32000-1 table 6 does not list.");
@@ -224,40 +260,45 @@ internal static partial class PdfARules
             "CCITTFaxDecode" or "JBIG2Decode" or "DCTDecode" or "JPXDecode" or "Crypt";
     }
 
-    private static bool IsIdentityCrypt(PdfDictionary dictionary)
+    private static bool IsIdentityCrypt(PdfDictionary dictionary, int filterIndex)
     {
-        PdfValue parms = dictionary.Get(PdfName.Get("DecodeParms"));
-        PdfDictionary? single = parms.AsDictionary;
+        PdfValue parms = dictionary.Get(PdfNames.DecodeParms);
+        PdfDictionary? selected = parms.AsArray is { } array
+            ? filterIndex < array.Count ? array.GetDictionary(filterIndex) : null
+            : parms.AsDictionary;
 
-        if (single is null && parms.AsArray is { } array)
-        {
-            for (int i = 0; i < array.Count; i++)
-                single ??= array.GetDictionary(i);
-        }
-
-        return single?.GetName(PdfName.Get("Name"))?.Value is null or "Identity";
+        return selected?.GetName(PdfNames.Name)?.Value is null or "Identity";
     }
 
     private static List<string> FilterNames(PdfDictionary dictionary, PdfName key)
     {
         List<string> names = [];
+        foreach ((_, string name) in FilterEntries(dictionary, key))
+            names.Add(name);
+
+        return names;
+    }
+
+    private static List<(int Index, string Name)> FilterEntries(PdfDictionary dictionary, PdfName key)
+    {
+        List<(int Index, string Name)> names = [];
         PdfValue value = dictionary.Get(key);
 
         if (value.AsName is { } single)
-            names.Add(single.Value);
+            names.Add((0, single.Value));
         else if (value.AsArray is { } array)
         {
             for (int i = 0; i < array.Count; i++)
             {
                 if (array.Get(i).AsName is { } name)
-                    names.Add(name.Value);
+                    names.Add((i, name.Value));
             }
         }
 
         return names;
     }
 
-    /// <summary>Clause 6.1.12: the permissions dictionary may hold two keys and no others.</summary>
+    /// <summary>Clause 6.1.12 of parts 2 and 3, clause 6.1.11 of part 4: permissions.</summary>
     private static void CheckPermissions(PdfAContext context)
     {
         if (context.Part == 1)
@@ -269,13 +310,48 @@ internal static partial class PdfARules
         foreach (PdfName key in permissions.Keys.ToArray())
         {
             if (key.Value is not ("UR3" or "DocMDP"))
-                context.Report("6.1.12", $"The permissions dictionary holds {key.Value}; only UR3 and DocMDP may appear.");
+            {
+                context.Report(
+                    context.Clause("6.1.12", "6.1.12", "6.1.11"),
+                    $"The permissions dictionary holds {key.Value}; only UR3 and DocMDP may appear.");
+            }
+        }
+
+        // Part 4 retained the permissions-key allowlist but removed the legacy digest-key rule.
+        if (context.Part == 4)
+            return;
+
+        if (context.Resolve(permissions.Get(PdfName.Get("DocMDP"))).AsDictionary is not { } signature ||
+            signature.GetArray(PdfName.Get("Reference")) is not { } references)
+        {
+            return;
+        }
+
+        for (int i = 0; i < references.Count; i++)
+        {
+            if (context.Resolve(references[i]).AsDictionary is not { } reference)
+                continue;
+
+            foreach (string forbidden in (string[])["DigestLocation", "DigestMethod", "DigestValue"])
+            {
+                if (reference.ContainsKey(PdfName.Get(forbidden)))
+                {
+                    context.Report(
+                        "6.1.12",
+                        $"The DocMDP signature reference dictionary carries {forbidden}, which PDF/A-2 and PDF/A-3 prohibit.");
+                }
+            }
         }
     }
 
     /// <summary>Clause 6.1.13 of parts 2 and 3, Table C.1 of PDF Reference for part 1.</summary>
     private static void CheckLimits(PdfAContext context)
     {
+        // Part 4 dropped the implementation-limit table retained by parts 1 to 3. PDF 2.0 limits
+        // are governed by its own specification and cannot be reported as ISO 19005-4 clause 6.1.13.
+        if (context.Part == 4)
+            return;
+
         const int MaxStringBytes = 32767;
         const int MaxNameBytes = 127;
         const int MaxObjects = 8388607;
@@ -285,7 +361,7 @@ internal static partial class PdfARules
         string clause = context.Clause("6.1.12", "6.1.13");
         bool string_ = false, name = false, real = false, integer = false;
 
-        foreach (PdfValue value in context.Values)
+        foreach (PdfValue value in context.FileValues)
         {
             switch (value.Kind)
             {
@@ -314,7 +390,7 @@ internal static partial class PdfARules
             }
         }
 
-        if (context.ObjectNumbers.Count > MaxObjects)
+        if (context.FileObjectNumbers.Count > MaxObjects)
             context.Report(clause, $"The file holds more than {MaxObjects} indirect objects.");
 
         CheckPageBoxes(context, clause);
@@ -356,7 +432,7 @@ internal static partial class PdfARules
     /// <summary>Clause 6.1.13: a DeviceN colour space names at most 32 colourants.</summary>
     private static void CheckColourantCount(PdfAContext context, string clause)
     {
-        foreach (PdfValue value in context.Values)
+        foreach (PdfValue value in context.FileValues)
         {
             if (value.AsArray is not { Count: >= 2 } array || array.Get(0).AsName?.Value != "DeviceN")
                 continue;
@@ -389,12 +465,9 @@ internal static partial class PdfARules
         }
     }
 
-    /// <summary>Clause 6.1.10 of parts 2 and 3: an inline image may not smuggle in a withdrawn filter.</summary>
+    /// <summary>Clause 6.1.10 of parts 1-3, clause 6.1.9 of part 4: inline image filters.</summary>
     private static void CheckInlineImages(PdfAContext context)
     {
-        if (context.Part == 1)
-            return;
-
         foreach (PdfAContentStream stream in PdfAContent.Enumerate(context))
         {
             for (int i = 0; i < stream.Operations.Count; i++)
@@ -413,10 +486,26 @@ internal static partial class PdfARules
 
     private static void CheckInlineFilters(PdfAContext context, PdfDictionary image, string where)
     {
+        string clause = context.Clause("6.1.10", "6.1.10", "6.1.9");
+
         foreach (string filter in FilterNames(image, PdfName.Get("F")).Concat(FilterNames(image, PdfNames.Filter)))
         {
-            if (filter is "LZW" or "LZWDecode" or "Crypt")
-                context.Report("6.1.10", $"An inline image on {where} uses the {filter} filter, which PDF/A forbids.");
+            if (!AllowedInlineFilter(filter))
+            {
+                context.Report(
+                    clause,
+                    $"An inline image on {where} uses the {filter} filter, which this part of PDF/A forbids.");
+            }
         }
+
+        // ISO 32000 limits inline images to the full names and abbreviations in its inline image
+        // table. JBIG2Decode and JPXDecode are valid stream filters, but not here.
+        static bool AllowedInlineFilter(string filter) => filter is
+                "ASCIIHexDecode" or "AHx" or
+                "ASCII85Decode" or "A85" or
+                "FlateDecode" or "Fl" or
+                "RunLengthDecode" or "RL" or
+                "CCITTFaxDecode" or "CCF" or
+                "DCTDecode" or "DCT";
     }
 }

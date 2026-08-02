@@ -8,18 +8,49 @@ public static class AsciiHexFilter
     /// <summary>Decodes hexadecimal text, stopping at the <c>&gt;</c> terminator.</summary>
     /// <param name="data">The encoded bytes.</param>
     public static byte[] Decode(ReadOnlySpan<byte> data)
-    {
-        var writer = new ArrayBufferWriter<byte>(Math.Max(16, data.Length / 2));
-        int high = -1;
+        => Decode(data, PdfFilterLimits.Cap, strict: false, out _, out _);
 
-        foreach (byte b in data)
+    /// <summary>Decodes no more than <paramref name="maxDecodedBytes"/> bytes.</summary>
+    internal static byte[] Decode(
+        ReadOnlySpan<byte> data,
+        int maxDecodedBytes,
+        out bool limitExceeded,
+        out bool invalidData) =>
+        Decode(data, maxDecodedBytes, strict: true, out limitExceeded, out invalidData);
+
+    private static byte[] Decode(
+        ReadOnlySpan<byte> data,
+        int maxDecodedBytes,
+        bool strict,
+        out bool limitExceeded,
+        out bool invalidData)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxDecodedBytes);
+        limitExceeded = false;
+        invalidData = false;
+        int initialCapacity = Math.Min(maxDecodedBytes, Math.Max(1, Math.Min(data.Length / 2, 64 * 1024)));
+        var writer = new ArrayBufferWriter<byte>(initialCapacity);
+        int high = -1;
+        bool terminated = false;
+
+        for (int position = 0; position < data.Length; position++)
         {
+            byte b = data[position];
             if (b == (byte)'>')
+            {
+                terminated = true;
+                if (strict && position + 1 != data.Length)
+                    invalidData = true;
                 break;
+            }
 
             int digit = HexValue(b);
             if (digit < 0)
+            {
+                if (strict && !IsWhitespace(b))
+                    invalidData = true;
                 continue;
+            }
 
             if (high < 0)
             {
@@ -27,6 +58,12 @@ public static class AsciiHexFilter
             }
             else
             {
+                if (writer.WrittenCount >= maxDecodedBytes)
+                {
+                    limitExceeded = true;
+                    break;
+                }
+
                 writer.Write([(byte)((high << 4) | digit)]);
                 high = -1;
             }
@@ -34,10 +71,20 @@ public static class AsciiHexFilter
 
         // An odd final digit is padded with zero, per §7.4.2.
         if (high >= 0)
-            writer.Write([(byte)(high << 4)]);
+        {
+            if (writer.WrittenCount >= maxDecodedBytes)
+                limitExceeded = true;
+            else
+                writer.Write([(byte)(high << 4)]);
+        }
+
+        if (strict && !terminated && !limitExceeded)
+            invalidData = true;
 
         return writer.WrittenSpan.ToArray();
     }
+
+    private static bool IsWhitespace(byte b) => b is 0x00 or 0x09 or 0x0A or 0x0C or 0x0D or 0x20;
 
     /// <summary>Encodes bytes as hexadecimal text with the mandatory terminator.</summary>
     /// <param name="data">The plaintext bytes.</param>
@@ -71,49 +118,120 @@ public static class Ascii85Filter
     /// <summary>Decodes base-85 text, honouring the <c>z</c> shorthand and the <c>~&gt;</c> terminator.</summary>
     /// <param name="data">The encoded bytes.</param>
     public static byte[] Decode(ReadOnlySpan<byte> data)
+        => Decode(data, PdfFilterLimits.Cap, strict: false, out _, out _);
+
+    /// <summary>Decodes no more than <paramref name="maxDecodedBytes"/> bytes.</summary>
+    internal static byte[] Decode(
+        ReadOnlySpan<byte> data,
+        int maxDecodedBytes,
+        out bool limitExceeded,
+        out bool invalidData) =>
+        Decode(data, maxDecodedBytes, strict: true, out limitExceeded, out invalidData);
+
+    private static byte[] Decode(
+        ReadOnlySpan<byte> data,
+        int maxDecodedBytes,
+        bool strict,
+        out bool limitExceeded,
+        out bool invalidData)
     {
-        var writer = new ArrayBufferWriter<byte>(Math.Max(16, data.Length * 4 / 5));
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxDecodedBytes);
+        limitExceeded = false;
+        invalidData = false;
+        int initialCapacity = Math.Min(maxDecodedBytes, Math.Max(1, Math.Min(data.Length, 64 * 1024)));
+        var writer = new ArrayBufferWriter<byte>(initialCapacity);
 
         if (data.Length >= 2 && data[0] == (byte)'<' && data[1] == (byte)'~')
+        {
+            if (strict)
+                invalidData = true;
             data = data[2..];
+        }
 
         Span<byte> group = stackalloc byte[5];
         int count = 0;
+        bool terminated = false;
 
         for (int i = 0; i < data.Length; i++)
         {
             byte b = data[i];
 
             if (b == (byte)'~')
+            {
+                if (i + 1 < data.Length && data[i + 1] == (byte)'>')
+                {
+                    terminated = true;
+                    if (strict && i + 2 != data.Length)
+                        invalidData = true;
+                }
+                else if (strict)
+                {
+                    invalidData = true;
+                }
+
                 break;
+            }
 
             if (b is 0x00 or 0x09 or 0x0A or 0x0C or 0x0D or 0x20)
                 continue;
 
             if (b == (byte)'z' && count == 0)
             {
-                writer.Write("\0\0\0\0"u8);
+                if (!TryWrite(writer, "\0\0\0\0"u8, maxDecodedBytes))
+                {
+                    limitExceeded = true;
+                    break;
+                }
+
+                continue;
+            }
+
+            if (b == (byte)'z')
+            {
+                if (strict)
+                    invalidData = true;
                 continue;
             }
 
             if (b is < (byte)'!' or > (byte)'u')
+            {
+                if (strict)
+                    invalidData = true;
                 continue;
+            }
 
             group[count++] = (byte)(b - (byte)'!');
             if (count != 5)
                 continue;
 
-            WriteGroup(writer, group, 5);
+            if (!WriteGroup(writer, group, 5, maxDecodedBytes, strict, out bool validGroup))
+            {
+                limitExceeded = true;
+                break;
+            }
+            if (!validGroup)
+                invalidData = true;
+
             count = 0;
         }
 
-        if (count > 1)
+        if (!limitExceeded && count == 1 && strict)
+        {
+            invalidData = true;
+        }
+        else if (!limitExceeded && count > 1)
         {
             for (int i = count; i < 5; i++)
                 group[i] = 84;
 
-            WriteGroup(writer, group, count);
+            if (!WriteGroup(writer, group, count, maxDecodedBytes, strict, out bool validGroup))
+                limitExceeded = true;
+            if (!validGroup)
+                invalidData = true;
         }
+
+        if (strict && !terminated && !limitExceeded)
+            invalidData = true;
 
         return writer.WrittenSpan.ToArray();
     }
@@ -155,19 +273,46 @@ public static class Ascii85Filter
         return writer.WrittenSpan.ToArray();
     }
 
-    private static void WriteGroup(ArrayBufferWriter<byte> writer, ReadOnlySpan<byte> group, int available)
+    private static bool WriteGroup(
+        ArrayBufferWriter<byte> writer,
+        ReadOnlySpan<byte> group,
+        int available,
+        int maxDecodedBytes,
+        bool strict,
+        out bool validGroup)
     {
-        uint value = 0;
+        ulong value = 0;
         for (int i = 0; i < 5; i++)
             value = (value * 85) + group[i];
+
+        validGroup = !strict || value <= uint.MaxValue;
 
         Span<byte> bytes = stackalloc byte[4];
         bytes[0] = (byte)(value >> 24);
         bytes[1] = (byte)(value >> 16);
         bytes[2] = (byte)(value >> 8);
         bytes[3] = (byte)value;
-        writer.Write(bytes[..(available - 1)]);
+        return TryWrite(writer, bytes[..(available - 1)], maxDecodedBytes);
     }
+
+    private static bool TryWrite(
+        ArrayBufferWriter<byte> writer,
+        ReadOnlySpan<byte> bytes,
+        int maxDecodedBytes)
+    {
+        int remaining = maxDecodedBytes - writer.WrittenCount;
+        if (bytes.Length <= remaining)
+        {
+            writer.Write(bytes);
+            return true;
+        }
+
+        if (remaining > 0)
+            writer.Write(bytes[..remaining]);
+
+        return false;
+    }
+
 }
 
 /// <summary>The <c>RunLengthDecode</c> filter of ISO 32000-1 §7.4.5.</summary>
@@ -176,22 +321,76 @@ public static class RunLengthFilter
     /// <summary>Decodes a run-length payload.</summary>
     /// <param name="data">The encoded bytes.</param>
     public static byte[] Decode(ReadOnlySpan<byte> data)
-    {
-        int cap = PdfFilterLimits.Cap;
-        var writer = new ArrayBufferWriter<byte>(Math.Min(cap, Math.Max(16, data.Length * 2)));
-        int position = 0;
+        => Decode(data, PdfFilterLimits.Cap, strict: false, out _, out _);
 
-        while (position < data.Length && writer.WrittenCount < cap)
+    /// <summary>Decodes no more than <paramref name="maxDecodedBytes"/> bytes.</summary>
+    internal static byte[] Decode(
+        ReadOnlySpan<byte> data,
+        int maxDecodedBytes,
+        out bool limitExceeded,
+        out bool invalidData) =>
+        Decode(data, maxDecodedBytes, strict: true, out limitExceeded, out invalidData);
+
+    private static byte[] Decode(
+        ReadOnlySpan<byte> data,
+        int maxDecodedBytes,
+        bool strict,
+        out bool limitExceeded,
+        out bool invalidData)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxDecodedBytes);
+        limitExceeded = false;
+        invalidData = false;
+        int cap = maxDecodedBytes;
+        int initialCapacity = Math.Min(cap, Math.Max(1, Math.Min(data.Length, 64 * 1024)));
+        var writer = new ArrayBufferWriter<byte>(initialCapacity);
+        int position = 0;
+        bool terminated = false;
+
+        while (position < data.Length)
         {
+            if (writer.WrittenCount >= cap)
+            {
+                if (data[position] == 128)
+                {
+                    terminated = true;
+                    position++;
+                }
+                else
+                {
+                    limitExceeded = true;
+                }
+
+                break;
+            }
+
             int length = data[position++];
             if (length == 128)
+            {
+                terminated = true;
                 break;
+            }
 
             if (length < 128)
             {
                 int take = Math.Min(length + 1, data.Length - position);
                 if (take <= 0)
+                {
+                    if (strict)
+                        invalidData = true;
                     break;
+                }
+
+                if (strict && take != length + 1)
+                    invalidData = true;
+
+                int remaining = cap - writer.WrittenCount;
+                if (take > remaining)
+                {
+                    writer.Write(data.Slice(position, remaining));
+                    limitExceeded = true;
+                    break;
+                }
 
                 writer.Write(data.Slice(position, take));
                 position += take;
@@ -199,13 +398,33 @@ public static class RunLengthFilter
             else
             {
                 if (position >= data.Length)
+                {
+                    if (strict)
+                        invalidData = true;
                     break;
+                }
 
                 byte repeated = data[position++];
-                Span<byte> destination = writer.GetSpan(257 - length)[..(257 - length)];
+                int runLength = 257 - length;
+                int remaining = cap - writer.WrittenCount;
+                int write = Math.Min(runLength, remaining);
+                Span<byte> destination = writer.GetSpan(write)[..write];
                 destination.Fill(repeated);
                 writer.Advance(destination.Length);
+                if (write < runLength)
+                {
+                    limitExceeded = true;
+                    break;
+                }
             }
+        }
+
+        if (strict)
+        {
+            if (!terminated && !limitExceeded)
+                invalidData = true;
+            else if (terminated && position != data.Length)
+                invalidData = true;
         }
 
         return writer.WrittenSpan.ToArray();

@@ -22,23 +22,31 @@ Rules live in `src/Inkwright.Layout/PdfA/`, one file per standard section; each 
 | --- | --- | --- | --- | --- |
 | 6.1.2 | 6.1.2 | `%PDF-1.n` from byte 0, followed by a comment of ≥4 bytes all greater than 127 | GV | the writer always does this; the validator reads file bytes |
 | — | 6.1.2 | Header version from 1.0 to 1.7 | GV | Part 1 claim pins 1.4; both `Save` and `SaveIncremental` at version 1.4 do not write object streams or cross-reference streams |
-| 6.1.3 | 6.1.3 | Trailer contains `ID` | GV | `PdfAProfile.Apply` creates an identifier if missing |
+| 6.1.3 | 6.1.3 | Trailer `ID` resolves to an array of exactly two byte strings | GV | `PdfAProfile.Apply` creates the pair if missing; the validator accepts both direct and indirect storage |
 | 6.1.3 | 6.1.3 | Trailer has no `Encrypt` | GV | `PdfDocument.Save` rejects encryption when PDF/A is claimed — for documents created in the current session and for loaded files with existing `pdfaid` metadata; the validator inspects the trailer and `WasEncrypted` |
 | 6.1.3 | 6.1.3 | No more than one EOL after the final `%%EOF` | GV | the writer ends the file with `%%EOF\n`; the validator checks the tail |
 | 6.1.4 | 6.1.4 | Exactly one EOL between `xref` and the subsection header | GV | checked at the byte level |
-| 6.1.4 | 6.1.4 | Objects outside the cross-reference table are exempt from requirements | G | the validator traverses only what is reachable from the catalog |
+| 6.1.4 | 6.1.4 | Objects outside the cross-reference table are exempt from requirements | G | file-scope rules inspect every live object named by xref; semantic rules traverse what is reachable from the catalog |
 | 6.1.6 | 6.1.6 | Hexadecimal strings have an even number of digits | GV | the serializer writes in pairs; the validator scans object bytes |
 | 6.1.7 | 6.1.7.1 | `stream` + LF or CRLF, `endstream` after EOL | GV | checked at the byte level |
-| 6.1.7 | 6.1.7.1 | Stream dictionary has no `F`, `FFilter`, `FDecodeParms` | GV | the library does not write them; the validator checks all streams |
-| 6.1.10 | 6.1.7.2 | No `LZWDecode`; `Crypt` only `Identity`; only filters from Table 6 | GV | the library writes Flate; the validator checks filter chains |
-| — | 6.1.8 | Font, color, and structure type names are valid UTF-8 | — | our output is ASCII; checking third-party names is not implemented |
-| 6.1.8 | 6.1.9 | `N G obj` separated by a single whitespace character, EOL after `obj` and before `endobj` | GV | checked at the object byte level |
-| — | 6.1.10 | Embedded images have no `LZW`, `Crypt`, or unknown filters | V | content stream parsing |
+| 6.1.7 | 6.1.7 | Every stream is an indirect object | GV | generated streams are added to the object table; validation distinguishes indirect stream dictionaries from streams nested directly inside another object |
+| 6.1.7 | 6.1.7.1 | Stream dictionary has no `F`, `FFilter`, `FDecodeParms` | GV | the library does not write them; the validator checks every stream in a live xref object |
+| 6.1.10 | 6.1.7.2 | No `LZWDecode`; `Crypt` only `Identity` and only as the first filter; only filters from Table 6 | GV | the library writes Flate; file-scope validation checks canonical full filter names and `DecodeParms` on every stream in a live xref object |
+| — | 6.1.8 | Font, color, and structure type names are valid UTF-8 | GV | the writer escapes UTF-8 bytes as `#xx`; file-scope validation checks decoded raw bytes in every live object for font names, Separation/DeviceN colourants, and structure types |
+| 6.1.8 | 6.1.9 | `N G obj` uses single separators; EOL before the object number, after `obj`, and before and after `endobj` | GV | all four boundaries are checked against the original object byte range |
+| — | 6.1.10 | Inline images use only the full or abbreviated filters allowed by the inline-image table; no `LZW`, `Crypt`, `JBIG2Decode`, `JPXDecode`, or unknown filters | V | content stream parsing expands abbreviations and validates every filter in a chain |
 | 6.1.9 | 6.1.11 | Linearization is allowed | n/a | the library does not linearize |
-| — | 6.1.12 | Permissions dictionary contains only `UR3` and `DocMDP` | V | catalog `Perms` is checked |
-| 6.1.12 | 6.1.13 | Limits: integers, reals, string and name length, object count, page sizes | V | traversal of all graph values |
+| — | 6.1.12 | Permissions contains only `UR3`/`DocMDP`; a `DocMDP` signature reference has no `DigestLocation`, `DigestMethod`, or `DigestValue` | V | catalog `Perms`, its certification signature, and indirect reference dictionaries are checked |
+| 6.1.12 | 6.1.13 | Limits: integers, reals, string and name length, object count, page sizes | V | scalar and container limits cover every value rooted at a live xref object; page dimensions remain a reachable-page rule |
 | 6.1.12 | 6.1.13 | Nesting of `q`/`Q` no deeper than 28; `DeviceN` has at most 32 colors | V | counting in content streams; parsing of the color space array |
 | 6.1.13 | — | Part 1 forbids `OCProperties` | V | see the optional content section |
+
+Validation deliberately keeps file scope and use-dependent semantics separate. Every live indirect
+object advertised by the cross-reference data is parsed for base limits, name encodings, stream
+dictionaries and filters, and Metadata/XMP. Graphics, fonts, actions, annotations, and content
+semantics still start at the catalogue, so an unused resource is not treated as if a page invoked
+it. The protected byte/file reader runs with recovery disabled and preflights every xref-live
+non-attachment stream before semantic rules consume it.
 
 ## 6.2 Graphics
 
@@ -74,7 +82,7 @@ Rules live in `src/Inkwright.Layout/PdfA/`, one file per standard section; each 
 | 6.3.2 | 6.2.11.2 | Font subtype is one defined in ISO 32000-1 | V | `Subtype` check |
 | 6.3.3.1 | 6.2.11.3.1 | `CIDSystemInfo` of font and CMap agree | — | only CMap presence is checked; Registry/Ordering comparison against predefined tables is not implemented |
 | 6.3.3.2 | 6.2.11.3.2 | `CIDFontType2` has `CIDToGIDMap` | GV | we write `Identity`; the validator checks presence |
-| 6.3.3.3 | 6.2.11.3.3 | CMap is predefined or embedded; `WMode` matches; `usecmap` only to predefined | GV | we use `Identity-H`; the validator parses embedded CMaps |
+| 6.3.3.3 | 6.2.11.3.3 | CMap is predefined or embedded; `WMode` matches; `usecmap`/`UseCMap` only reference predefined maps | GV | we use `Identity-H`; the validator checks the stream dictionary and tokenizes every actual `usecmap` operand, so comments and unrelated names cannot satisfy the rule |
 | 6.3.4 | 6.2.11.4.1 | All fonts are embedded | GV | `PdfFontCollection.Embed`; the validator traverses all `/Type /Font` dictionaries |
 | 6.3.5 | 6.2.11.4.2 | Part 1: subsets require `CharSet` (Type 1) and `CIDSet` (CID) | GV | the generator writes `CIDSet` from the subsetter's actual glyph set |
 | 6.3.6 | 6.2.11.5 | Widths in the dictionary match the font program | GV | widths come from `hmtx`; the validator parses embedded TrueType and compares `W` (composite fonts; simple font `Widths` are not compared) |
@@ -95,7 +103,7 @@ Rules live in `src/Inkwright.Layout/PdfA/`, one file per standard section; each 
 | 6.9 | 6.4.1 | `NeedAppearances` absent or false | GV | `PdfForm` does not set it; the validator checks |
 | 6.9 | 6.4.1 | Field and widget have no `A` and `AA` | GV | recursive traversal of the field tree |
 | — | 6.4.2 | No `XFA` in the form and no `NeedsRendering` in the catalog | V | the catalog is checked |
-| 6.6.1 | 6.5.1 | Forbidden actions and named actions except four navigational ones | V | traversal of all action dictionaries |
+| 6.6.1 | 6.5.1 | Forbidden actions and named actions except four navigational ones | V | action roots from the catalog, pages, annotations, fields, outlines, JavaScript name tree, and chained `Next` actions are traversed; an unrelated dictionary that merely has an `S` key is not misclassified as an action |
 | 6.6.2 | 6.5.2 | No `AA` on catalog, fields, and (Parts 2/3) pages | V | the catalog, fields, and pages are checked |
 | 6.6.3 | 6.5.3 | Reader displays addresses for `GoToR`, `URI`, `SubmitForm` | n/a | requirement on the interactive reader |
 
@@ -103,10 +111,11 @@ Rules live in `src/Inkwright.Layout/PdfA/`, one file per standard section; each 
 
 | Part 1 | Part 2/3 | Requirement | Status | How |
 | --- | --- | --- | --- | --- |
-| 6.7.2 | 6.6.2.1 | Catalog has a `Metadata` stream with XMP | GV | `XmpMetadata.ApplyTo`; the validator requires the stream |
+| 6.7.2 | 6.6.2.1 | Catalog has a `Metadata` stream with XMP | GV | `XmpMetadata.ApplyTo`; validation detects the XML encoding from its BOM/declaration, bounds XML, prohibits DTDs, and reuses one parsed packet for identification and metadata rules |
+| 6.7.2 | 6.6.2.1 | Every file-scope Metadata stream has exact `Type Metadata`, `Subtype XML`, and valid XMP/RDF | V | Metadata entries and explicitly typed Metadata streams in live xref objects are deduplicated and checked, including packets outside the catalogue graph |
 | 6.7.2 | — | Part 1: metadata stream has no `Filter` | GV | the packet is written uncompressed |
 | — | 6.6.2.1 | Packet header has no `bytes` or `encoding` attributes | GV | the header is written without them |
-| — | 6.6.2.1 | Packet content is valid XML/RDF | GV | the validator parses the packet via `XDocument` |
+| — | 6.6.2.1 | Packet content is valid XML/RDF | GV | the validator parses via `XDocument` and requires PDF/A identification and schema descriptions to belong to RDF document subjects |
 | 6.7.8 | 6.6.2.3.2 | All non-standard schemas described via `pdfaExtension:schemas` | GV | `XmpMetadata.AddExtensionSchema`; Factur-X describes the `fx:` schema |
 | 6.7.11 | 6.6.4 | `pdfaid:part` and `pdfaid:conformance` match the claim | GV | written from the level; the validator compares against the level under test |
 | 6.1.5 + 6.7.3 | 6.6.3 | Part 1: DocInfo and XMP agree (Parts 2/3 — recommendation) | GV | `Apply` writes the same Producer and dates; each save synchronizes `pdf:Producer`, `xmp:ModifyDate`, and `xmp:MetadataDate` with DocInfo; the validator compares strings and dates for Part 1 |
@@ -129,19 +138,60 @@ Rules live in `src/Inkwright.Layout/PdfA/`, one file per standard section; each 
 
 | Part 1 | Part 2/3 | Requirement | Status | How |
 | --- | --- | --- | --- | --- |
-| 6.1.11 | — | Part 1 forbids `EF` and `EmbeddedFiles` | V | the validator rejects any attachment when Part 1 is claimed |
-| — | 6.8 | Part 2 allows attachments only if they are PDF/A themselves; Part 3 — any | V | by attachment MIME type; full conformance of the embedded PDF cannot be verified |
-| — | 6.8 | File specification has `F` and `UF` | GV | `PdfAttachments.Add` writes both |
-| 6.1.13 | 6.9 | Part 1 forbids `OCProperties`; Parts 2/3 require `Name` on each configuration, forbid `AS`, require complete `Order` | V | parsing of `OCProperties` |
+| 6.1.11 | — | Part 1 forbids `EF` and `EmbeddedFiles` | V | the validator rejects both a recursive `EmbeddedFiles` name tree and every file specification with `EF` rooted at a live xref object, including catalog-unreachable and `AF`-only specifications |
+| — | 6.8 | Part 2 allows attachments only if they conform to PDF/A-1 or PDF/A-2; Part 3 allows any type | V | every file specification rooted at a live xref object is validated, including catalog-unreachable specifications; decoded Part 2 attachments are opened as separate documents, and the exact `pdfaid:part`/`pdfaid:conformance` claim selects the child profile and complete recursive validator |
+| — | 6.8 | An embedded file specification is an indirect `/Type /Filespec` dictionary with string `F` and `UF`; an embedded stream's optional `Type` is `/EmbeddedFile` | GV | `PdfAttachments.Add` and merge/relist write indirect specifications and streams; validation requires a well-formed, strictly ordered `EmbeddedFiles` name tree with exact descendant `Limits`, and malformed file specifications or payload types fail closed |
+| — | 6.8 | `EF` and `RF` use the canonical `F`, `UF`, `DOS`, `Mac`, and `Unix` keys | V | unknown aliases are rejected; every `EF` key has its matching file-specification string, every `RF` key also exists in `EF` and contains string/stream pairs, and payload streams are deduplicated by identity before validation |
+| — | Annex E.1 | A Part 3 associated file has a MIME `Subtype` | GV | the writer supplies it and the validator reports a missing value against the Annex rather than extending this rule to Part 4 |
+| — | Annex E.2, Table E.1 | A Part 3 associated file has `AFRelationship`; custom second-class relationship names are allowed | GV | the writer supplies a predefined value; the validator requires the key without restricting the relationship name |
+| 6.1.13 | 6.9 | Part 1 forbids `OCProperties`; Parts 2/3 require `Name` on each configuration, forbid `AS`, require complete `Order` | V | `Order` is traversed recursively and compared by OCG object/reference identity; hierarchy label strings and duplicates cannot mask a missing group |
 | — | 6.10 | No `AlternatePresentations` and `PresSteps` | V | the catalog and pages are checked |
 | — | 6.11 | No `Requirements` in the catalog | V | the catalog is checked |
+
+The default recursive-validation budget is 16 nested PDF levels and 128 embedded PDFs. The root and
+all children share three separate 128 MiB byte ledgers: encoded input for attachment payloads and
+reader-created child streams, cumulative bytes materialized by filter and predictor stages, and final
+decoded child bytes accepted for recursion. The byte/file entry point installs a strict policy before
+the root reader loads, and every embedded reader inherits it with recovery disabled, so
+cross-reference streams, object streams, and XMP cannot bypass the ledgers. Every xref-live stream
+that is not a recognised `EF`/`RF` attachment payload is preflighted; recognised payloads retain
+their own bounded decode and, where required, recursive reservation. Strict decoding uses only the
+canonical stream `Filter` and `DecodeParms` entries: inline-image abbreviations and external-file
+aliases cannot stand in for them. A terminal image codec remains encoded in that codec after every
+preceding filter has been checked. `/Params/Size` is only a preflight hint.
+
+The ledgers stop stage output at their bounds; they are work/input/output counters, not an exact
+process-memory/RSS ceiling. Bounded decoder buffers and returned arrays add copy overhead, while the
+parser/object cache, graph lists and identity sets allocate up to their value caps; bounded XMP also
+holds an `XDocument` and canonical text (up to 16 Mi characters), and reported problems allocate
+strings. The strict PDF/A paths reject malformed encodings, trailing data, unsupported filters and
+invalid filter ordering fail-closed; ordinary public decoder APIs remain compatibility-oriented and
+tolerant. A stream chain is limited to 64 filters. Attachment discovery has separate default bounds:
+64 name-tree levels, 4,096 name-tree nodes or entries, and 1,024 unique file specifications. The root
+and all children share a 1,048,576-value graph budget across both the catalogue-reachable graph and
+values rooted at all xref-live objects. Protected readers have separate shared caps of 1,048,576
+parsed values and 1,048,576 xref/object-stream structural entries;
+all declared xref rows, including free and future entry types, consume that structural budget.
+Recovery scans for catalogs, pages, xref entries, and object-stream slots are disabled. A SHA-256
+fingerprint set detects content cycles on the active path. Malformed or truncated discovery and
+every reached limit produce a fail-closed problem instead of an exception or silent acceptance.
+
+XMP has its own exact shared limits: by default every file-scope Metadata stream in the root and
+recursively opened children shares at most 16 MiB of decoded metadata bytes and 16 MiB of XML
+characters in total. Malformed encodings and DTD declarations fail closed, while XML 1.0 encodings
+such as BOM-marked UTF-16 remain
+valid; `MaxCharactersInDocument` bounds the parsed content. The bounded
+`XDocument` (or its failure) is cached per document, so reading the embedded PDF/A claim and then
+running the metadata rules neither parses nor charges the same packet twice. Stream decoding is
+bounded before the complete packet is materialized, including when one stream is aliased as both
+catalog `Metadata` and an `EF` payload.
 
 ## Annex B Signatures
 
 | Part 1 | Part 2/3 | Requirement | Status | How |
 | --- | --- | --- | --- | --- |
-| — | B.1 | `ByteRange` covers the entire file except the signature itself | GV | `PdfSigner` computes the range from the finished file; the validator compares against file length |
-| — | B.1 | `SubFilter` is one the reader must understand | GV | we write `ETSI.CAdES.detached` |
+| — | B.1 | `ByteRange` covers the complete signed revision except the signature itself | GV | `PdfSigner` covers the finished revision; the validator requires four direct integers, a direct hexadecimal `Contents`, direct top-level signature values, and an exact `<Contents>` gap, then accepts the current EOF or an earlier incremental revision ending at its own `%%EOF` |
+| — | B.1 | Reader supports the standard `SubFilter` handlers | n/a | this is a processor capability, not a restriction on files; the validator does not reject a vendor handler merely because it is not registered locally |
 | — | B.1 | Exactly one signer in PKCS#7 | G | `CmsBuilder` creates one signature; parsing third-party CMS in the validator is not done — the layout package deliberately does not pull in cryptography |
 | — | B.1 | Timestamp and revocation information | G | `PdfSignatureOptions.TimestampUri` (PAdES B-T) |
 
@@ -150,7 +200,7 @@ Rules live in `src/Inkwright.Layout/PdfA/`, one file per standard section; each 
 These requirements cannot be verified from the file, and the validator is silent about them by design, not by oversight:
 
 - legality of font embedding (6.3.4 / 6.2.11.4.1) — a licensing question, not bytes;
-- conformance of an embedded PDF to its claimed part (6.8) — would require recursive validation of the attachment as a separate document;
+- structural validity of the cross-reference table and trailer at an earlier signed-revision boundary — Annex B validation confirms its `%%EOF` boundary but does not reopen that historical revision separately;
 - JPEG 2000 codestream restrictions (6.2.8.3) — the library does not parse JPX;
 - agreement of font `CIDSystemInfo` with a predefined CMap (6.2.11.3.1) — Adobe tables are needed;
 - `ActualText` for private-use characters (6.2.11.7.3);

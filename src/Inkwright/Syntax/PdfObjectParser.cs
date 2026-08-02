@@ -1,4 +1,5 @@
 using Inkwright.Cos;
+using Inkwright.Diagnostics;
 
 namespace Inkwright.Syntax;
 
@@ -7,8 +8,15 @@ namespace Inkwright.Syntax;
 /// sequence carries: the declared length may itself be an indirect reference, and damaged files
 /// need the payload located by searching for <c>endstream</c>.
 /// </summary>
-internal interface IPdfStreamPayloadReader
+internal interface IPdfStreamDecodePolicyProvider
 {
+    /// <summary>The decode policy attached to streams parsed from this reader, when any.</summary>
+    IPdfStreamDecodePolicy? DecodePolicy { get; }
+}
+
+internal interface IPdfStreamPayloadReader : IPdfStreamDecodePolicyProvider
+{
+
     /// <summary>Locates the payload of a stream whose <c>stream</c> keyword has just been read.</summary>
     /// <param name="dictionary">The stream dictionary parsed immediately before the keyword.</param>
     /// <param name="dataStart">The offset of the first payload byte.</param>
@@ -18,9 +26,9 @@ internal interface IPdfStreamPayloadReader
 }
 
 /// <summary>
-/// Builds <see cref="PdfValue"/> graphs from a token stream. The parser is deliberately total: any
-/// malformed construct degrades to the null object rather than throwing, and a depth guard keeps
-/// hostile nesting from exhausting the stack.
+/// Builds <see cref="PdfValue"/> graphs from a token stream. Compatibility reads degrade malformed
+/// constructs to the null object; a protected reader instead fails closed. A depth guard keeps
+/// hostile nesting from exhausting the stack in either mode.
 /// </summary>
 internal ref struct PdfObjectParser
 {
@@ -29,7 +37,9 @@ internal ref struct PdfObjectParser
     private PdfLexer _lexer;
     private readonly IPdfResolver? _resolver;
     private readonly IPdfStreamPayloadReader? _streams;
+    private readonly IPdfStreamDecodePolicy? _decodePolicy;
     private int _depth;
+    private bool _mayReadIndirectStream;
 
     internal PdfObjectParser(
         ReadOnlySpan<byte> data,
@@ -37,9 +47,11 @@ internal ref struct PdfObjectParser
         IPdfResolver? resolver = null,
         IPdfStreamPayloadReader? streams = null)
     {
-        _lexer = new PdfLexer(data, position);
         _resolver = resolver;
         _streams = streams;
+        _decodePolicy = streams?.DecodePolicy ??
+                        (resolver as IPdfStreamDecodePolicyProvider)?.DecodePolicy;
+        _lexer = new PdfLexer(data, position, strict: _decodePolicy is not null);
     }
 
     /// <summary>The offset the parser will read from next.</summary>
@@ -59,8 +71,17 @@ internal ref struct PdfObjectParser
     /// <returns>The parsed object, or the null object at end of input or on a stray keyword.</returns>
     internal PdfValue ParseValue()
     {
+        bool isTopLevel = _depth == 0;
         PdfTokenType token = _lexer.Read();
-        return ParseFromToken(token);
+        try
+        {
+            return ParseFromToken(token);
+        }
+        finally
+        {
+            if (isTopLevel)
+                _mayReadIndirectStream = false;
+        }
     }
 
     /// <summary>Reads the <c>number generation obj</c> header that introduces an indirect object.</summary>
@@ -69,6 +90,7 @@ internal ref struct PdfObjectParser
     internal bool TryReadHeader(out PdfObjectId id)
     {
         id = default;
+        _mayReadIndirectStream = false;
 
         if (_lexer.Read() != PdfTokenType.Integer)
             return false;
@@ -87,6 +109,7 @@ internal ref struct PdfObjectParser
             return false;
 
         id = new PdfObjectId((int)number, (int)generation);
+        _mayReadIndirectStream = true;
         return true;
     }
 
@@ -127,10 +150,13 @@ internal ref struct PdfObjectParser
     {
         LastKeyword = default;
 
+        if (token != PdfTokenType.EndOfInput)
+            _decodePolicy?.ConsumeParsedValues(1);
+
         switch (token)
         {
             case PdfTokenType.EndOfInput:
-                return PdfValue.Null;
+                return ProtectedFailure("A protected object value ended before a value was read.");
 
             case PdfTokenType.Integer:
                 return ParseIntegerOrReference();
@@ -157,7 +183,7 @@ internal ref struct PdfObjectParser
                 return ParseKeyword();
 
             default:
-                return PdfValue.Null;
+                return ProtectedFailure("A protected object value contains a stray closing token.");
         }
     }
 
@@ -172,7 +198,11 @@ internal ref struct PdfObjectParser
         if (keyword.SequenceEqual("false"u8))
             return PdfValue.False;
 
-        return PdfValue.Null;
+        if (keyword.SequenceEqual("null"u8))
+            return PdfValue.Null;
+
+        return ProtectedFailure(
+            $"A protected object value contains the unknown keyword '{Ascii(keyword)}'.");
     }
 
     private PdfValue ParseIntegerOrReference()
@@ -198,6 +228,13 @@ internal ref struct PdfObjectParser
     {
         if (++_depth > MaxDepth)
         {
+            if (_decodePolicy is not null)
+            {
+                _depth--;
+                throw new PdfFormatException(
+                    $"A protected array exceeds the parser nesting limit of {MaxDepth} levels.");
+            }
+
             SkipToArrayEnd();
             _depth--;
             return PdfValue.Null;
@@ -209,18 +246,32 @@ internal ref struct PdfObjectParser
         {
             PdfTokenType token = _lexer.Read();
 
-            if (token is PdfTokenType.ArrayEnd or PdfTokenType.EndOfInput)
+            if (token == PdfTokenType.ArrayEnd)
                 break;
+
+            if (token == PdfTokenType.EndOfInput)
+            {
+                if (_decodePolicy is not null)
+                    throw new PdfFormatException("A protected array is not closed with ].");
+
+                break;
+            }
 
             // A dictionary end inside an array means the array was never closed; stop before it.
             if (token == PdfTokenType.DictionaryEnd)
             {
+                if (_decodePolicy is not null)
+                    throw new PdfFormatException("A protected array is not closed with ].");
+
                 _lexer.Position = _lexer.TokenStart;
                 break;
             }
 
             if (token == PdfTokenType.Keyword && IsObjectBoundary(_lexer.TokenSpan))
             {
+                if (_decodePolicy is not null)
+                    throw new PdfFormatException("A protected array is not closed with ].");
+
                 _lexer.Position = _lexer.TokenStart;
                 break;
             }
@@ -234,8 +285,16 @@ internal ref struct PdfObjectParser
 
     private PdfValue ParseDictionaryOrStream()
     {
+        bool mayBeIndirectStream = _depth == 0 && _mayReadIndirectStream;
         if (++_depth > MaxDepth)
         {
+            if (_decodePolicy is not null)
+            {
+                _depth--;
+                throw new PdfFormatException(
+                    $"A protected dictionary exceeds the parser nesting limit of {MaxDepth} levels.");
+            }
+
             SkipToDictionaryEnd();
             _depth--;
             return PdfValue.Null;
@@ -247,22 +306,49 @@ internal ref struct PdfObjectParser
         {
             PdfTokenType token = _lexer.Read();
 
-            if (token is PdfTokenType.DictionaryEnd or PdfTokenType.EndOfInput)
+            if (token == PdfTokenType.DictionaryEnd)
                 break;
+
+            if (token == PdfTokenType.EndOfInput)
+            {
+                if (_decodePolicy is not null)
+                    throw new PdfFormatException("A protected dictionary is not closed with >>.");
+
+                break;
+            }
 
             if (token != PdfTokenType.Name)
             {
                 if (token == PdfTokenType.Keyword && IsObjectBoundary(_lexer.TokenSpan))
                 {
+                    if (_decodePolicy is not null)
+                        throw new PdfFormatException("A protected dictionary is not closed with >>.");
+
                     _lexer.Position = _lexer.TokenStart;
                     break;
                 }
 
+                if (_decodePolicy is not null)
+                {
+                    throw new PdfFormatException(
+                        "A protected dictionary contains a value where a name key is required.");
+                }
+
                 // A value where a key belongs: drop it and resynchronise on the next key.
+                // It is still parser work, so a protected reader must charge it even though it
+                // cannot become part of the resulting value graph.
+                _decodePolicy?.ConsumeParsedValues(1);
                 continue;
             }
 
             PdfName key = PdfName.Get(_lexer.NameValue());
+            if (_decodePolicy is not null && dictionary.ContainsKey(key))
+            {
+                throw new PdfFormatException(
+                    $"A protected dictionary contains the duplicate key /{key.Value}.");
+            }
+
+            _decodePolicy?.ConsumeParsedValues(1);
             PdfValue value = ParseValue();
             dictionary.Set(key, value);
         }
@@ -272,14 +358,50 @@ internal ref struct PdfObjectParser
         int afterDictionary = _lexer.Position;
         if (_streams is not null && _lexer.Read() == PdfTokenType.Keyword && _lexer.KeywordIs("stream"u8))
         {
+            if (_decodePolicy is not null && !mayBeIndirectStream)
+            {
+                throw new PdfFormatException(
+                    "A protected stream shall be the top-level value of an indirect object.");
+            }
+
+            int separator = _lexer.Position;
             _lexer.SkipEndOfLine();
+            if (_decodePolicy is not null &&
+                _lexer.Position == separator &&
+                separator < _lexer.Data.Length &&
+                PdfCharacters.IsWhitespace(_lexer.Data[separator]))
+            {
+                // Keep a malformed but unambiguous stream inspectable so the PDF/A byte rule can
+                // report the missing EOL against its exact clause. The separator is not payload.
+                _lexer.Position++;
+            }
+
             ReadOnlyMemory<byte> payload = _streams.ReadPayload(dictionary, _lexer.Position, out int endPosition);
             _lexer.Position = endPosition;
-            return PdfValue.Stream(new PdfStream(dictionary, payload));
+            _decodePolicy?.ConsumeParsedValues(1);
+            return PdfValue.Stream(new PdfStream(dictionary, payload, _decodePolicy));
         }
 
         _lexer.Position = afterDictionary;
         return PdfValue.Dictionary(dictionary);
+    }
+
+    private PdfValue ProtectedFailure(string message)
+    {
+        if (_decodePolicy is not null)
+            throw new PdfFormatException(message);
+
+        return PdfValue.Null;
+    }
+
+    private static string Ascii(ReadOnlySpan<byte> bytes)
+    {
+        int length = Math.Min(bytes.Length, 64);
+        Span<char> chars = stackalloc char[length];
+        for (int i = 0; i < length; i++)
+            chars[i] = bytes[i] is >= 0x20 and <= 0x7E ? (char)bytes[i] : '\uFFFD';
+
+        return new string(chars);
     }
 
     private void SkipToArrayEnd()
@@ -290,6 +412,8 @@ internal ref struct PdfObjectParser
             PdfTokenType token = _lexer.Read();
             if (token == PdfTokenType.EndOfInput)
                 return;
+
+            _decodePolicy?.ConsumeParsedValues(1);
 
             if (token == PdfTokenType.ArrayStart)
                 depth++;
@@ -306,6 +430,8 @@ internal ref struct PdfObjectParser
             PdfTokenType token = _lexer.Read();
             if (token == PdfTokenType.EndOfInput)
                 return;
+
+            _decodePolicy?.ConsumeParsedValues(1);
 
             if (token == PdfTokenType.DictionaryStart)
                 depth++;

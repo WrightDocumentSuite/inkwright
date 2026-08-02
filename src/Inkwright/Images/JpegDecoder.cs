@@ -25,14 +25,18 @@ internal static class JpegDecoder
 
     /// <summary>Decodes a JPEG file.</summary>
     /// <param name="data">The whole file, starting at the start-of-image marker.</param>
+    /// <param name="colorTransform">
+    /// The DCTDecode parameter to use when the file has no Adobe APP14 marker, or null for the
+    /// component-count default from ISO 32000-2 Table 13.
+    /// </param>
     /// <exception cref="NotSupportedException">The file uses a coding this decoder does not read.</exception>
-    internal static JpegImage Decode(ReadOnlySpan<byte> data)
+    internal static JpegImage Decode(ReadOnlySpan<byte> data, int? colorTransform = null)
     {
         var reader = new JpegFrameReader(data);
         JpegFrame frame = reader.Read();
 
         byte[] planes = JpegScanDecoder.Decode(frame);
-        return Combine(frame, planes);
+        return Combine(frame, planes, colorTransform);
     }
 
     /// <summary>
@@ -40,19 +44,24 @@ internal static class JpegDecoder
     /// is decided the way every decoder decides it: by the Adobe marker if there is one, and by the
     /// number of components if there is not.
     /// </summary>
-    private static JpegImage Combine(JpegFrame frame, byte[] planes)
+    private static JpegImage Combine(JpegFrame frame, byte[] planes, int? colorTransform)
     {
         int width = frame.Width;
         int height = frame.Height;
         int count = frame.Components.Length;
         byte[] samples = new byte[width * height * count];
 
-        bool ycc = count switch
-        {
-            3 => frame.AdobeTransform != 0,
-            4 => frame.AdobeTransform == 2,
-            _ => false,
-        };
+        // ISO 32000-2 Table 13: APP14 wins when present. Without it, DecodeParms wins; without
+        // either, only a three-component JPEG defaults to a colour transform. Adobe calls its
+        // four-component transform 2, while the PDF dictionary calls both YCbCr and YCbCrK 1.
+        bool ycc = frame.HasAdobe
+            ? count switch
+            {
+                3 => frame.AdobeTransform == 1,
+                4 => frame.AdobeTransform == 2,
+                _ => false,
+            }
+            : count is 3 or 4 && colorTransform.GetValueOrDefault(count == 3 ? 1 : 0) == 1;
 
         for (int i = 0; i < width * height; i++)
         {

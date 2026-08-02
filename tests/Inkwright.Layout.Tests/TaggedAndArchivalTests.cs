@@ -200,7 +200,8 @@ public class TaggedAndArchivalTests
         InvalidOperationException failure = Assert.Throws<InvalidOperationException>(
             () => PdfAProfile.Apply(document, PdfAConformance.A2B));
 
-        Assert.Contains("PDF/A-3", failure.Message, StringComparison.Ordinal);
+        Assert.Contains("invoice.xml", failure.Message, StringComparison.Ordinal);
+        Assert.Contains("not a PDF", failure.Message, StringComparison.OrdinalIgnoreCase);
 
         PdfAProfile.Apply(document, PdfAConformance.A3B);
         Assert.Empty(PdfAProfile.Validate(document, PdfAConformance.A3B));

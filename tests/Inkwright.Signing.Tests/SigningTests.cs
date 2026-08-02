@@ -193,6 +193,31 @@ public class SigningTests
     }
 
     [Fact]
+    public void TimestampsASignatureProducedByAnExternalSigner()
+    {
+        using X509Certificate2 certificate = CreateCertificate("CN=Remote Timestamped Signer");
+        using var authority = new TestTimestampAuthority();
+        var remote = new RemoteSigner(certificate);
+
+        byte[] signed = Sign(BuildDocument(), new PdfSignatureOptions
+        {
+            ExternalSigner = remote,
+            Level = PdfSignatureLevel.Timestamped,
+            TimestampClient = authority,
+            FieldName = "RemoteTimestamped",
+        });
+
+        Assert.True(remote.WasCalled, "The external signer should have produced the signature.");
+        Assert.Equal(1, authority.Requests);
+
+        PdfSignatureInfo signature = Assert.Single(PdfSignatureVerifier.Verify(signed));
+        Assert.True(signature.IsIntact, signature.Problem);
+        Assert.True(signature.TimestampIntact, "The RFC 3161 token must bind to the remote signature value.");
+        Assert.NotNull(signature.TimestampTime);
+        Assert.Equal(certificate.Thumbprint, signature.SignerCertificate?.Thumbprint);
+    }
+
+    [Fact]
     public void SetsTheSignatureFlagsAViewerLooksFor()
     {
         using X509Certificate2 certificate = CreateCertificate("CN=Inkwright Test Signer");

@@ -20,9 +20,9 @@ internal static class PageTreeWalker
         HashSet<int> visited = [];
 
         PdfValue root = catalog.TryGetRaw(PdfNames.Pages, out PdfValue value) ? value : PdfValue.Null;
-        Walk(document, root, [], pages, visited, 0, diagnostics);
+        _ = Walk(document, root, [], pages, visited, 0, diagnostics, PdfObjectId.None);
 
-        if (pages.Count == 0 && document.Reader is not null)
+        if (pages.Count == 0 && document.Reader?.Recover == true)
         {
             List<PdfPage> scanned = ScanForPages(document);
             if (scanned.Count > 0)
@@ -36,32 +36,79 @@ internal static class PageTreeWalker
         return pages;
     }
 
-    private static void Walk(
+    private static int Walk(
         PdfDocument document,
         PdfValue node,
         PdfDictionary? inherited,
         List<PdfPage> pages,
         HashSet<int> visited,
         int depth,
-        LoadDiagnostics diagnostics)
+        LoadDiagnostics diagnostics,
+        PdfObjectId expectedParent)
     {
-        if (depth > 64 || pages.Count >= MaxPages)
-            return;
+        bool strict = document.Reader?.Recover == false;
+        if (depth > 64)
+        {
+            if (strict)
+                throw new PdfFormatException("The page tree exceeds the protected depth limit.");
+
+            return 0;
+        }
+
+        if (pages.Count >= MaxPages)
+        {
+            if (strict)
+                throw new PdfFormatException($"The page tree exceeds the protected limit of {MaxPages} pages.");
+
+            return 0;
+        }
+
+        if (depth > 0 && !node.IsReference && strict)
+            throw new PdfFormatException("A page tree Kids entry must be an indirect reference.");
 
         PdfObjectId id = node.IsReference ? node.AsReference : PdfObjectId.None;
         if (id.IsValid && !visited.Add(id.Number))
         {
+            if (strict)
+                throw new PdfFormatException("The page tree contains a cycle or repeated node.");
+
             diagnostics.Add(PdfWarningCode.PageTreeCycle, "The page tree revisits a node.", id);
-            return;
+            return 0;
         }
 
         if (document.Resolve(node).AsDictionary is not { } dictionary)
-            return;
+        {
+            if (strict)
+                throw new PdfFormatException("A page tree entry does not resolve to a dictionary.");
+
+            return 0;
+        }
 
         PdfName? type = dictionary.GetName(PdfNames.Type);
         PdfArray? kids = dictionary.GetArray(PdfNames.Kids);
 
-        if (type == PdfNames.Page || (kids is null && type != PdfNames.Pages))
+        if (strict)
+        {
+            if (type != PdfNames.Page && type != PdfNames.Pages)
+                throw new PdfFormatException("Every page tree node must have Type Page or Pages.");
+
+            if (depth == 0)
+            {
+                if (type != PdfNames.Pages)
+                    throw new PdfFormatException("The page tree root must have Type Pages.");
+
+                if (dictionary.ContainsKey(PdfNames.Parent))
+                    throw new PdfFormatException("The page tree root must not have a Parent entry.");
+            }
+            else if (!dictionary.TryGetRaw(PdfNames.Parent, out PdfValue parent) ||
+                     !parent.IsReference || parent.AsReference != expectedParent)
+            {
+                throw new PdfFormatException(
+                    "A page tree node's Parent entry must reference its actual parent.");
+            }
+        }
+
+        if (type == PdfNames.Page || (!strict && kids is null && type != PdfNames.Pages))
         {
             ApplyInherited(dictionary, inherited);
 
@@ -69,15 +116,39 @@ internal static class PageTreeWalker
                 id = document.AddObject(PdfValue.Dictionary(dictionary));
 
             pages.Add(new PdfPage(document, id, dictionary));
-            return;
+            return 1;
         }
 
         if (kids is null)
-            return;
+        {
+            if (strict)
+                throw new PdfFormatException("A Pages node has no usable Kids array.");
+
+            return 0;
+        }
+
+        int declaredCount = 0;
+        if (strict)
+        {
+            PdfValue count = dictionary.Get(PdfNames.Count);
+            if (count.Kind != PdfValueKind.Integer || count.AsInteger is < 0 or > MaxPages)
+                throw new PdfFormatException("A Pages node has no valid Count entry.");
+
+            declaredCount = (int)count.AsInteger;
+        }
 
         PdfDictionary? merged = Merge(inherited, dictionary);
+        int descendants = 0;
         for (int i = 0; i < kids.Count; i++)
-            Walk(document, kids[i], merged, pages, visited, depth + 1, diagnostics);
+            descendants += Walk(document, kids[i], merged, pages, visited, depth + 1, diagnostics, id);
+
+        if (strict && descendants != declaredCount)
+        {
+            throw new PdfFormatException(
+                $"A Pages node declares Count {declaredCount}, but has {descendants} descendant pages.");
+        }
+
+        return descendants;
     }
 
     private static PdfDictionary? Merge(PdfDictionary? inherited, PdfDictionary node)

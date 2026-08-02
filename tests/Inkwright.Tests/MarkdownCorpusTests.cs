@@ -66,6 +66,19 @@ public sealed class MarkdownCorpusTests
         Assert.True(exported >= 8, $"Only {exported} feature-tagged PDFs exported.");
         Assert.True(resolved <= referenced, $"Resolved {resolved} of only {referenced} MCID references.");
         Assert.True(failures.Count == 0, string.Join('\n', failures.Take(25)));
+
+        if (Corpus.Files.Count == 7807)
+        {
+            Assert.Equal(24, candidates);
+            Assert.Equal(21, exported);
+            Assert.Equal(2140, referenced);
+            Assert.Equal(149, resolved);
+        }
+
+        CorpusRoundTripTests.WriteMetric(
+            "markdown-corpus candidates={0} exported={1} mcid-referenced={2} " +
+            "mcid-resolved={3} failures={4}",
+            candidates, exported, referenced, resolved, failures.Count);
     }
 
     private static IEnumerable<string> FeatureTaggedCandidates(int limit)

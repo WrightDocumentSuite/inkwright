@@ -8,9 +8,9 @@ namespace Inkwright.Images.Jbig2;
 /// is left is a page bitmap and a handful of region segments drawn onto it.
 /// </summary>
 /// <remarks>
-/// Generic regions, symbol dictionaries and text regions are decoded, which together cover the two
-/// ways a scanner compresses a page: as a plain bitmap, or as a dictionary of letter shapes with a
-/// list of where to put them. Halftone regions are refused by name rather than decoded wrongly.
+/// Generic, text, refinement and halftone regions are decoded, together with their symbol and
+/// pattern dictionaries. Unknown optional extension segments are ignored; an unknown necessary
+/// extension is rejected because omitting it could change the intended page image.
 /// </remarks>
 internal static class Jbig2Decoder
 {
@@ -38,7 +38,7 @@ internal static class Jbig2Decoder
 
         // A text region names the dictionaries holding its symbols by segment number, so what each
         // dictionary exported has to stay available until every region that refers to it is done.
-        var dictionaries = new Dictionary<uint, Jbig2Bitmap[]>();
+        var dictionaries = new Dictionary<uint, Jbig2SymbolDictionaryResult>();
         var patterns = new Dictionary<uint, Jbig2Bitmap[]>();
         var tables = new Dictionary<uint, Jbig2HuffmanTable>();
 
@@ -46,6 +46,7 @@ internal static class Jbig2Decoder
         // refine, and only the immediate segment at the end of that chain reaches the page (§8.2).
         var buffers = new Dictionary<uint, Jbig2Bitmap>();
         bool drawn = false;
+        bool hasPageInformation = false;
 
         foreach (Jbig2Segment segment in segments)
         {
@@ -53,11 +54,15 @@ internal static class Jbig2Decoder
             {
                 case Jbig2SegmentType.PageInformation:
                     ApplyPageDefault(page, segment.Data.Span);
+                    hasPageInformation = true;
                     break;
 
                 case Jbig2SegmentType.SymbolDictionary:
                     dictionaries[segment.Number] = Jbig2SymbolDictionary.Decode(
-                        segment.Data, Gather(dictionaries, segment), GatherTables(tables, segment));
+                        segment.Data,
+                        Gather(dictionaries, segment),
+                        GatherTables(tables, segment),
+                        LastReferredDictionary(dictionaries, segment)?.RetainedContext);
 
                     break;
 
@@ -77,39 +82,39 @@ internal static class Jbig2Decoder
                 case Jbig2SegmentType.ImmediateRefinementRegion:
                 case Jbig2SegmentType.ImmediateLosslessRefinementRegion:
                 case Jbig2SegmentType.IntermediateRefinementRegion:
-                {
-                    RegionInfo info = ReadRegionInfo(segment.Data.Span);
-
-                    Jbig2Bitmap region = segment.Type switch
                     {
-                        Jbig2SegmentType.ImmediateTextRegion or
-                        Jbig2SegmentType.ImmediateLosslessTextRegion or
-                        Jbig2SegmentType.IntermediateTextRegion => DecodeTextRegion(
-                            segment, info, Gather(dictionaries, segment), GatherTables(tables, segment)),
+                        RegionInfo info = ReadRegionInfo(segment.Data.Span);
 
-                        Jbig2SegmentType.ImmediateHalftoneRegion or
-                        Jbig2SegmentType.ImmediateLosslessHalftoneRegion or
-                        Jbig2SegmentType.IntermediateHalftoneRegion => Jbig2HalftoneRegion.Decode(
-                            segment.Data[17..], GatherPatterns(patterns, segment), info.Width, info.Height),
+                        Jbig2Bitmap region = segment.Type switch
+                        {
+                            Jbig2SegmentType.ImmediateTextRegion or
+                            Jbig2SegmentType.ImmediateLosslessTextRegion or
+                            Jbig2SegmentType.IntermediateTextRegion => DecodeTextRegion(
+                                segment, info, Gather(dictionaries, segment), GatherTables(tables, segment)),
 
-                        Jbig2SegmentType.ImmediateRefinementRegion or
-                        Jbig2SegmentType.ImmediateLosslessRefinementRegion or
-                        Jbig2SegmentType.IntermediateRefinementRegion => DecodeRefinementRegion(
-                            page, segment, info, buffers),
+                            Jbig2SegmentType.ImmediateHalftoneRegion or
+                            Jbig2SegmentType.ImmediateLosslessHalftoneRegion or
+                            Jbig2SegmentType.IntermediateHalftoneRegion => Jbig2HalftoneRegion.Decode(
+                                segment.Data[17..], GatherPatterns(patterns, segment), info.Width, info.Height),
 
-                        _ => DecodeGenericRegion(segment.Data, info),
-                    };
+                            Jbig2SegmentType.ImmediateRefinementRegion or
+                            Jbig2SegmentType.ImmediateLosslessRefinementRegion or
+                            Jbig2SegmentType.IntermediateRefinementRegion => DecodeRefinementRegion(
+                                page, segment, info, buffers),
 
-                    if (IsIntermediate(segment.Type))
-                    {
-                        buffers[segment.Number] = region;
+                            _ => DecodeGenericRegion(segment.Data, info),
+                        };
+
+                        if (IsIntermediate(segment.Type))
+                        {
+                            buffers[segment.Number] = region;
+                            break;
+                        }
+
+                        page.Combine(region, info.X, info.Y, info.Combination);
+                        drawn = true;
                         break;
                     }
-
-                    page.Combine(region, info.X, info.Y, info.Combination);
-                    drawn = true;
-                    break;
-                }
 
                 case Jbig2SegmentType.Tables:
                     tables[segment.Number] = Jbig2HuffmanTable.ReadCustom(segment.Data);
@@ -118,8 +123,11 @@ internal static class Jbig2Decoder
                 case Jbig2SegmentType.EndOfPage:
                 case Jbig2SegmentType.EndOfStripe:
                 case Jbig2SegmentType.EndOfFile:
-                case Jbig2SegmentType.Extension:
                 case Jbig2SegmentType.Profiles:
+                    break;
+
+                case Jbig2SegmentType.Extension:
+                    ValidateExtension(segment.Data.Span);
                     break;
 
                 case Jbig2SegmentType.ColourPalette:
@@ -132,10 +140,31 @@ internal static class Jbig2Decoder
             }
         }
 
-        if (!drawn)
+        // A Page Information segment is itself sufficient to define a page. T.88 §7.4.8 allows
+        // it to have no region segments, in which case the result is entirely the default pixel.
+        if (!drawn && !hasPageInformation)
             throw new NotSupportedException("The JBIG2 image holds no region to decode.");
 
         return page.ToPackedRows();
+    }
+
+    /// <summary>
+    /// Reads the extension header of §7.4.14. Comments and unknown optional extensions cannot alter
+    /// rendering and may be skipped. Bit 31 says the extension is necessary to reproduce the page,
+    /// so an unrecognised necessary type must fail closed rather than return an incomplete bitmap.
+    /// </summary>
+    private static void ValidateExtension(ReadOnlySpan<byte> data)
+    {
+        if (data.Length < sizeof(uint))
+            throw new NotSupportedException("A JBIG2 extension header is truncated.");
+
+        uint extensionType = BinaryPrimitives.ReadUInt32BigEndian(data);
+        bool knownComment = extensionType is 0x20000000u or 0x20000002u;
+        if (!knownComment && (extensionType & 0x80000000u) != 0)
+        {
+            throw new NotSupportedException(
+                $"JBIG2 necessary extension type 0x{extensionType:X8} is not decoded.");
+        }
     }
 
     /// <summary>
@@ -153,17 +182,35 @@ internal static class Jbig2Decoder
     /// them. The order matters: symbol identifiers index this list.
     /// </summary>
     private static List<Jbig2Bitmap> Gather(
-        Dictionary<uint, Jbig2Bitmap[]> dictionaries, Jbig2Segment segment)
+        Dictionary<uint, Jbig2SymbolDictionaryResult> dictionaries, Jbig2Segment segment)
     {
         var symbols = new List<Jbig2Bitmap>();
 
         foreach (uint number in segment.Referred)
         {
-            if (dictionaries.TryGetValue(number, out Jbig2Bitmap[]? exported))
-                symbols.AddRange(exported);
+            if (dictionaries.TryGetValue(number, out Jbig2SymbolDictionaryResult? dictionary))
+                symbols.AddRange(dictionary.Exported);
         }
 
         return symbols;
+    }
+
+    /// <summary>
+    /// Gets the last symbol dictionary named by this segment. Context reuse is specifically tied
+    /// to that dictionary; a retained context from an earlier reference must not be substituted
+    /// when the last dictionary did not retain one (ITU-T T.88 §7.4.2.2).
+    /// </summary>
+    private static Jbig2SymbolDictionaryResult? LastReferredDictionary(
+        Dictionary<uint, Jbig2SymbolDictionaryResult> dictionaries,
+        Jbig2Segment segment)
+    {
+        for (int i = segment.Referred.Length - 1; i >= 0; i--)
+        {
+            if (dictionaries.TryGetValue(segment.Referred[i], out Jbig2SymbolDictionaryResult? dictionary))
+                return dictionary;
+        }
+
+        return null;
     }
 
     /// <summary>
@@ -205,8 +252,8 @@ internal static class Jbig2Decoder
     private static void ApplyPageDefault(Jbig2Bitmap page, ReadOnlySpan<byte> data)
     {
         // Width, height, x resolution and y resolution take sixteen bytes; the flags follow.
-        if (data.Length < 17)
-            return;
+        if (data.Length < 19)
+            throw new NotSupportedException("The JBIG2 page information segment is truncated.");
 
         int flags = data[16];
         if (((flags >> 2) & 1) != 0)

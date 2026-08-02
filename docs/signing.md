@@ -219,7 +219,7 @@ public sealed class HsmSigner : IExternalSigner
 byte[] signed = PdfSigner.Sign(document, new PdfSignatureOptions { ExternalSigner = new HsmSigner() });
 ```
 
-For an external key the CMS structure is encoded by the library itself (`DetachedCms`): platform `SignedCms` requires a key it can export, which an HSM will never do. Only the digest leaves the boundary.
+For an external key the CMS structure is encoded by the library itself (`DetachedCms`): platform `SignedCms` requires a key it can export, which an HSM will never do. Only the digest leaves the boundary. The same signer can request `PdfSignatureLevel.Timestamped`; after the HSM returns the signature, the library attaches and verifies the RFC 3161 unsigned attribute without asking for the private key again, so external signatures support PAdES B-T as well as B-B.
 
 ## Verification
 

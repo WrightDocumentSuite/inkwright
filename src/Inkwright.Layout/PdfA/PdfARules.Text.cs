@@ -126,8 +126,8 @@ internal static partial class PdfARules
     }
 
     /// <summary>
-    /// Clause 6.2.11.8: nothing may show the .notdef glyph. With Identity encoding the glyph index
-    /// is the character code, so a zero code is a request to draw the empty box.
+    /// Clauses 6.2.11.8 (parts 2 and 3) and 6.2.10.9 (part 4): nothing may show the .notdef glyph.
+    /// With Identity encoding the glyph index is the character code, so a zero code draws the box.
     /// </summary>
     private static void CheckNotdef(PdfAContext context)
     {
@@ -140,7 +140,7 @@ internal static partial class PdfARules
                 continue;
 
             context.Report(
-                "6.2.11.8",
+                context.Part == 4 ? "6.2.10.9" : "6.2.11.8",
                 $"The content of {stream.Description} shows the .notdef glyph, which stands for a " +
                 "character the font does not have and carries no meaning of its own.");
 

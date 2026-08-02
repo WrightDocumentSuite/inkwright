@@ -19,7 +19,7 @@ internal static partial class PdfARules
         "KSCpc-EUC-H", "UniKS-UCS2-H", "UniKS-UCS2-V", "UniKS-UTF16-H", "UniKS-UTF16-V",
     ];
 
-    /// <summary>Clause 6.3 of part 1, clause 6.2.11 of parts 2 and 3: fonts.</summary>
+    /// <summary>Clause 6.3 of part 1, 6.2.11 of parts 2 and 3, and 6.2.10 of part 4: fonts.</summary>
     internal static void CheckFonts(PdfAContext context)
     {
         foreach (PdfDictionary dictionary in context.Dictionaries)
@@ -40,7 +40,9 @@ internal static partial class PdfARules
 
         if (!IsKnownFontType(subtype))
         {
-            context.Report(context.Clause("6.3.2", "6.2.11.2"), $"The font '{name}' has the unknown subtype {subtype}.");
+            context.Report(
+                context.Clause("6.3.2", "6.2.11.2", "6.2.10.2"),
+                $"The font '{name}' has the unknown subtype {subtype}.");
             return;
         }
 
@@ -71,7 +73,7 @@ internal static partial class PdfARules
         if (!embedded)
         {
             context.Report(
-                context.Clause("6.3.4", "6.2.11.4.1"),
+                context.Clause("6.3.4", "6.2.11.4.1", "6.2.10.4"),
                 $"The font '{name}' is not embedded. PDF/A has no built-in fonts, so even Helvetica has " +
                 "to travel with the file.");
 
@@ -102,7 +104,9 @@ internal static partial class PdfARules
             context.Report("6.3.5", $"The Type 1 subset '{name}' has no CharSet string, which part 1 requires.");
     }
 
-    /// <summary>Clause 6.3.3 of part 1, 6.2.11.3 of parts 2 and 3: composite fonts and their CMaps.</summary>
+    /// <summary>
+    /// Clause 6.3.3 of part 1, 6.2.11.3 of parts 2 and 3, and 6.2.10.3 of part 4: composite fonts.
+    /// </summary>
     private static void CheckComposite(PdfAContext context, PdfDictionary font, string name, string subtype)
     {
         if (subtype != "Type0")
@@ -115,7 +119,7 @@ internal static partial class PdfARules
             !descendant.ContainsKey(PdfNames.CIDToGIDMap))
         {
             context.Report(
-                context.Clause("6.3.3.2", "6.2.11.3.2"),
+                context.Clause("6.3.3.2", "6.2.11.3.2", "6.2.10.3.2"),
                 $"The CIDFont of '{name}' has no CIDToGIDMap entry.");
         }
 
@@ -128,25 +132,32 @@ internal static partial class PdfARules
         if (encoding.Length > 0 && !PredefinedCMaps.Contains(encoding, StringComparer.Ordinal))
         {
             context.Report(
-                context.Clause("6.3.3.3", "6.2.11.3.3"),
+                context.Clause("6.3.3.3", "6.2.11.3.3", "6.2.10.3.3"),
                 $"The font '{name}' names the CMap {encoding}, which is neither predefined nor embedded.");
         }
     }
 
     private static void CheckEmbeddedCMap(PdfAContext context, PdfStream cmap, string name)
     {
-        string clause = context.Clause("6.3.3.3", "6.2.11.3.3");
+        string clause = context.Clause("6.3.3.3", "6.2.11.3.3", "6.2.10.3.3");
         long declared = cmap.Dictionary.GetInteger(PdfName.Get("WMode"), 0);
+        PdfValue dictionaryUseCMap = cmap.Dictionary.Get(PdfName.Get("UseCMap"));
+        string? dictionaryName = dictionaryUseCMap.AsName?.Value;
+        bool invalidUseCMap = !dictionaryUseCMap.IsNull &&
+                              (dictionaryName is null ||
+                               !PredefinedCMaps.Contains(dictionaryName, StringComparer.Ordinal));
 
-        string text;
+        ReadOnlyMemory<byte> program;
         try
         {
-            text = System.Text.Encoding.Latin1.GetString(cmap.DecodedSpan());
+            program = cmap.Decode();
         }
         catch (Exception exception) when (exception is IOException or InvalidOperationException)
         {
             return;
         }
+
+        string text = System.Text.Encoding.Latin1.GetString(program.Span);
 
         int marker = text.IndexOf("/WMode", StringComparison.Ordinal);
         if (marker >= 0)
@@ -156,25 +167,33 @@ internal static partial class PdfARules
                 context.Report(clause, $"The CMap of '{name}' declares WMode {declared} but its stream says {tail[0]}.");
         }
 
-        if (!text.Contains("usecmap", StringComparison.Ordinal))
-            return;
-
-        foreach (string predefined in PredefinedCMaps)
+        CMap parsed = CMap.Parse(program.Span);
+        foreach (string? included in parsed.IncludedNames)
         {
-            if (text.Contains(predefined, StringComparison.Ordinal))
-                return;
+            if (included is not null && PredefinedCMaps.Contains(included, StringComparer.Ordinal))
+                continue;
+
+            invalidUseCMap = true;
+            break;
         }
 
-        context.Report(clause, $"The CMap of '{name}' builds on another CMap that is not one of the predefined ones.");
+        if (invalidUseCMap)
+        {
+            context.Report(
+                clause,
+                $"The CMap of '{name}' builds on another CMap that is not one of the predefined ones.");
+        }
     }
 
-    /// <summary>Clause 6.3.7 of part 1, 6.2.11.6 of parts 2 and 3: how codes reach glyphs.</summary>
+    /// <summary>
+    /// Clauses 6.3.7, 6.2.11.6, and 6.2.10.6 respectively: how codes reach glyphs.
+    /// </summary>
     private static void CheckTrueTypeEncoding(PdfAContext context, PdfDictionary font, string name, string subtype)
     {
         if (subtype != "TrueType")
             return;
 
-        string clause = context.Clause("6.3.7", "6.2.11.6");
+        string clause = context.Clause("6.3.7", "6.2.11.6", "6.2.10.6");
         long flags = Descriptor(font).GetInteger(PdfNames.Flags, 0);
         bool symbolic = (flags & 4) != 0 && (flags & 32) == 0;
 
@@ -202,8 +221,8 @@ internal static partial class PdfARules
     }
 
     /// <summary>
-    /// Clause 6.3.6 of part 1, 6.2.11.5 of parts 2 and 3: the widths in the dictionary and the
-    /// widths in the program have to agree, or the text moves depending on which one a reader reads.
+    /// Clauses 6.3.6, 6.2.11.5, and 6.2.10.5 respectively: the widths in the dictionary and the
+    /// program have to agree, or the text moves depending on which one a reader reads.
     /// </summary>
     private static void CheckWidths(PdfAContext context, PdfDictionary font, string name, string subtype)
     {
@@ -214,7 +233,7 @@ internal static partial class PdfARules
         if (descendant is null || LoadProgram(descendant) is not { } program)
             return;
 
-        string clause = context.Clause("6.3.6", "6.2.11.5");
+        string clause = context.Clause("6.3.6", "6.2.11.5", "6.2.10.5");
 
         foreach ((int cid, double declared) in CidWidths(descendant))
         {

@@ -72,6 +72,43 @@ Recovery is built in, not bolted on:
 All of this becomes `PdfWarning` with a code in `LoadDiagnostics`. `PdfFormatException` is thrown in
 exactly one case: the data contains neither a header nor a single indirect object.
 
+This tolerance is the general-purpose reading contract. The byte and file entry points of the
+PDF/A validator use a protected reader instead: recovery is disabled before the root file or an
+embedded child parses its cross-reference and object streams, and strict stream decoding is
+installed with the validation tree's shared resource budgets. That path does not replace missing
+catalogues, pages, xref entries, or object-stream slots with scan results.
+
+The protected xref pass also journals every row by revision, including free, compressed, and future
+row types. A single per-object revision index recreates first-wins lookup with a lower-bound search;
+it does not retain a full object map for every historical revision. After live objects are
+preflighted, shadowed normal rows are parsed by an isolated resolver for one revision group at a time.
+Indirect stream `Length` references therefore cannot pick up a later override, and historical parsing
+neither decrypts payloads nor mutates the live object map or cache. Provenance checks use the union of
+live and historical object/payload ranges, so a reached `Prev`/`XRefStm` section cannot be hidden
+inside an obsolete stream or string; only an xref stream's exact own object and payload overlap is
+permitted. Each ordinary incremental body, from the preceding `%%EOF` (from the original `/L` when
+appending to a linearized file, or from the oldest header line) to its primary xref, must additionally
+consist only of that revision's indexed normal objects and inter-object whitespace/comments. This
+catches an otherwise invisible, entirely unindexed carrier.
+
+For files that advertise Annex F linearization, the protected reader validates its structural xref
+envelope: the classic first-page/main journals and trailers, exact `H` stream ranges, original object
+groups, and `O`/`E`/`N`/`P` against Part 6 and the current ordered page tree. The binary F.4 hint-table
+payload remains opaque because the reader does not use range hints; this is not a claim of full Annex F
+conformance. The structural check is deliberately fail-closed: linearized xref streams are rejected
+until they have an equivalent exact journal, and a page-changing incremental update can invalidate
+otherwise historical linearization metadata. The tolerant reader keeps its compatibility behaviour.
+
+Protected validation separates file scope from document semantics. Base-format rules for
+implementation limits, name encodings, stream dictionaries and filters, and XMP inspect every
+value, dictionary, and stream rooted at a live xref object, including objects not reachable from the
+catalogue. Graphics, fonts, actions, annotations, and other use-dependent rules remain
+catalogue-reachable: an unused object is not silently treated as page content. In Parts 1–3,
+attachment discovery is likewise file-scoped and includes specifications rooted at every live xref
+object; Part 4 keeps its normative `Catalog/Names/EmbeddedFiles` condition. Every live stream except
+a recognised `EF`/`RF` attachment payload is decoded once in a strict preflight; attachment payloads
+keep their dedicated decode and recursive-validation reservations.
+
 The stream expansion limit (`PdfFilterLimits`, 128 MB by default) closes zip bombs: a few kilobytes
 of deflate can claim a terabyte.
 
@@ -173,11 +210,11 @@ reason to discard an image we cannot reproduce. Details in [annotations.md](anno
   changes are allowed under DocMDP.
 - Integrity protection (ISO/TS 32004) is read, verified, and written — as a separate token in the
   trailer or a signature attribute. Salt is derived once at encryption and cannot be added later.
-- JBIG2 is fully decoded except for dictionaries that reuse a neighboring segment's encoding
-  context, extended templates with twelve adaptive pixels, and three edge cases of symbol
-  refinement-aggregate encoding (SDREFAGG with refinement, including Huffman). These are synthetic
-  conformance files that encode one test image exotically; they are honestly rejected with an
-  exception rather than decoded incorrectly.
+- JBIG2 is fully decoded except for extended templates with twelve adaptive pixels. Symbol
+  refinement aggregates are supported in both arithmetic and Huffman forms, and retained
+  symbol-dictionary coding contexts use snapshot isolation. Page-information-only streams produce
+  their default-pixel page; unknown optional extension segments are skipped, while unknown
+  necessary extensions are rejected rather than silently changing the intended bitmap.
 - Linearization is read but not written.
 - PDF/A and PDF/UA are checked for what can be checked from the file. Everything that requires human
   judgment — tag appropriateness, reading order, meaningful alternative text — is not checked and

@@ -77,15 +77,21 @@ Cubic interpolation (`/Order 3`) for the sampled type is computed by the tensor 
 | Codec | Status |
 | --- | --- |
 | FlateDecode, LZWDecode, RunLengthDecode, ASCII85, ASCIIHex | decoded |
-| DCTDecode (JPEG) | sequential baseline is decoded, including subsampling, restart markers, CMYK, and Adobe marker inversion |
+| DCTDecode (JPEG) | sequential baseline is decoded, including subsampling, restart markers, CMYK, Adobe marker inversion, and PDF `ColorTransform` |
 | DCTDecode progressive | rejected with a clear message |
 | CCITTFaxDecode | decoded: one-dimensional MH, two-dimensional MR and MMR |
-| JBIG2Decode | decoded; known refinement-aggregation and context-reuse fixtures are rejected explicitly |
+| JBIG2Decode | decoded |
 | JPXDecode (JPEG 2000) | not decoded |
 
 Rejection is always explicit: `PdfImageReader.CanDecode` answers in advance, and `Decode` throws `NotSupportedException` with the codec name. Raw data remains available through the stream itself, so JPEG 2000 can be handed to an external decoder without re-parsing the file.
 
 Progressive JPEG is rejected on purpose: decoding it incorrectly is worse than not decoding at all.
+
+For a JPEG without an Adobe APP14 marker, `/DecodeParms /ColorTransform` decides whether three- or
+four-component samples are colour transformed. If both are absent, the PDF default is YCbCr for
+three components and raw samples otherwise. An APP14 marker takes precedence over the PDF entry,
+as ISO 32000 requires; this matters for files whose bytes are valid JPEG but whose samples are
+already RGB or CMYK.
 
 ### Fax encodings
 
@@ -110,9 +116,23 @@ All encoding methods used by scanners are implemented.
 | Halftone region and pattern dictionary, gray planes in Gray code | §6.6, §6.7, Annex C | |
 | Huffman tables B.1–B.15 and custom tables (segment 53) | Annex B | |
 | Intermediate regions and auxiliary buffers | §8.2 | |
+| Page Information without a region, including the default pixel | §7.4.8 | decoded |
+| Extension segments and comments | §7.4.14 | known comments accepted; unknown optional extensions skipped; unknown necessary extensions rejected |
 
-Not decoded: dictionaries that reuse another segment’s encoding context (a flag almost nobody sets), and extended templates with twelve adaptive pixels.
+Symbol dictionaries may retain their generic and refinement MQ statistics for a later dictionary. The decoder snapshots both context arrays, restores an independent copy from the last referred symbol dictionary, and requires the Huffman/refinement/template/AT configuration mandated by T.88 §7.4.2.2 to match. Independent copies matter: two dictionaries may both reuse one snapshot and must not teach each other different probabilities.
 
-The key check is the `bitmap-*.pdf` family in the corpus: about sixty files encode the same 399×400 image in every possible way (each reference corner, transposition, each composition operator, negative offset, refinement, Huffman, halftone, wide segment numbers), and all yield byte-identical results. Across the corpus, 135 of 142 images decode versus 48 before this revision.
+Refinement aggregates use the text-region procedure from T.88 §6.4. A strip's terminating
+`DeltaS` out-of-band value is consumed even when that strip placed the last advertised instance;
+otherwise the following symbol-width or Huffman field would begin at the wrong bit. Arithmetic and
+Huffman refinement-aggregate variants are covered by byte-for-byte image comparisons.
+
+The necessary bit in an extension type is treated as a correctness boundary. A known comment or an
+unknown optional extension cannot change the rendered page and may be ignored; an unknown necessary
+extension could change it and therefore fails explicitly. Truncated extension headers also fail
+instead of being mistaken for optional data.
+
+Not decoded: extended templates with twelve adaptive pixels.
+
+The key check is the `bitmap-*.pdf` family in the corpus: 96 files encode the same 399×400 image in every possible way (each reference corner, transposition, each composition operator, negative offset, refinement, Huffman, retained contexts, halftone, wide segment numbers), and every form now yields byte-identical results. Page-information-only streams also produce the blank page defined by their default pixel, using the PDF Image XObject dimensions for the returned sample matrix. With known corpus credentials, all 142 of 142 JBIG2 images decode versus 48 before the original implementation; the generic locked-document harness reaches 141 of 142 because it does not supply the password for one otherwise valid fixture.
 
 Restrictions PDF imposes on JBIG2 (ISO 32000-2 §7.4.7) are enforced: color palette (segment type 54) and the color extension flag are rejected because the standard forbids them. A JBIG2 file header inside a PDF stream is forbidden but appears and is skipped silently. Details are in [pdf20-audit.md](pdf20-audit.md).

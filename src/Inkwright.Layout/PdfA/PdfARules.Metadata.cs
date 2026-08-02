@@ -7,7 +7,7 @@ namespace Inkwright.Layout;
 internal static partial class PdfARules
 {
     /// <summary>The schemas every conforming reader is expected to know without being told.</summary>
-    private static readonly string[] KnownNamespaces =
+    private static readonly string[] _knownNamespaces =
     [
         "http://purl.org/dc/elements/1.1/",
         "http://ns.adobe.com/xap/1.0/",
@@ -36,43 +36,131 @@ internal static partial class PdfARules
         "http://ns.adobe.com/xap/1.0/sType/Job#",
     ];
 
-    /// <summary>Clause 6.7 of part 1, clause 6.6 of parts 2 and 3: XMP metadata.</summary>
+    /// <summary>Clause 6.7 of parts 1 and 4, clause 6.6 of parts 2 and 3: XMP metadata.</summary>
     internal static void CheckMetadata(PdfAContext context)
     {
-        string clause = context.Clause("6.7.2", "6.6.2.1");
-
-        if (context.Document.Catalog.Get(PdfName.Get("Metadata")).AsStream is not { } stream)
+        string clause = context.Clause("6.7.2", "6.6.2.1", "6.7.2.1");
+        PdfStream? catalogMetadata = context.Document.Catalog.Get(PdfNames.Metadata).AsStream;
+        if (catalogMetadata is null)
         {
             context.Report(
                 clause,
                 "The catalogue has no Metadata stream. A file that cannot say what it is has nothing " +
                 "to preserve its identity with.");
-
-            return;
         }
 
-        if (context.Part == 1 && stream.Dictionary.ContainsKey(PdfNames.Filter))
+        List<PdfStream> streams = MetadataStreams(context, catalogMetadata, clause);
+        PdfAXmpPacket? catalogPacket = null;
+        for (int i = 0; i < streams.Count; i++)
+        {
+            PdfStream stream = streams[i];
+            bool catalog = ReferenceEquals(stream, catalogMetadata);
+            CheckMetadataStreamDeclaration(context, stream, clause);
+
+            if (context.Part == 1 && stream.Dictionary.ContainsKey(PdfNames.Filter))
+            {
+                context.Report(
+                    "6.7.2",
+                    "A Metadata stream is filtered. Part 1 wants it in plain sight, so that a tool " +
+                    "which knows nothing about PDF can still read what the file claims to be.");
+            }
+
+            if (!context.Validation.TryReadXmp(
+                    stream,
+                    out PdfAXmpPacket? packet,
+                    out string? problem))
+            {
+                context.Report(
+                    clause,
+                    $"The {(catalog ? "catalogue" : "file-level")} XMP metadata is unusable: {problem}");
+                continue;
+            }
+
+            if (!PdfAXmpStructure.TryGetDescriptions(
+                    packet!.Document,
+                    out _,
+                    out string? structureProblem))
+            {
+                context.Report(
+                    clause,
+                    $"The {(catalog ? "catalogue" : "file-level")} Metadata stream is not a valid " +
+                    $"XMP packet: {structureProblem}");
+                continue;
+            }
+
+            if (catalog)
+                catalogPacket = packet;
+        }
+
+        if (catalogPacket is null)
+            return;
+
+        CheckPacketHeader(context, catalogPacket.Text, clause);
+        CheckPacketContents(context, catalogPacket.Document);
+        CheckDocumentInformation(context, catalogPacket.Text);
+    }
+
+    private static List<PdfStream> MetadataStreams(
+        PdfAContext context,
+        PdfStream? catalogMetadata,
+        string clause)
+    {
+        var result = new List<PdfStream>();
+        var seen = new HashSet<PdfStream>(ReferenceEqualityComparer.Instance);
+        Add(catalogMetadata);
+
+        foreach (PdfDictionary dictionary in context.FileDictionaries)
+        {
+            if (!dictionary.TryGetRaw(PdfNames.Metadata, out PdfValue entry))
+                continue;
+
+            if (context.Resolve(entry).AsStream is { } stream)
+            {
+                Add(stream);
+            }
+            else if (!ReferenceEquals(dictionary, context.Document.Catalog))
+            {
+                context.Report(
+                    clause,
+                    "A file-scope Metadata entry does not refer to a Metadata stream.");
+            }
+        }
+
+        // A stream explicitly declaring itself as Metadata is still metadata when it is reached
+        // through a producer-specific key rather than a standard Metadata entry.
+        foreach (PdfStream stream in context.FileStreams)
+        {
+            if (stream.Dictionary.GetName(PdfNames.Type) == PdfNames.Metadata)
+                Add(stream);
+        }
+
+        return result;
+
+        void Add(PdfStream? stream)
+        {
+            if (stream is not null && seen.Add(stream))
+                result.Add(stream);
+        }
+    }
+
+    private static void CheckMetadataStreamDeclaration(
+        PdfAContext context,
+        PdfStream stream,
+        string clause)
+    {
+        if (stream.Dictionary.GetName(PdfNames.Type) != PdfNames.Metadata)
         {
             context.Report(
-                "6.7.2",
-                "The metadata stream is filtered. Part 1 wants it in plain sight, so that a tool " +
-                "which knows nothing about PDF can still read what the file claims to be.");
+                clause,
+                "Every Metadata stream shall carry the exact /Type /Metadata declaration.");
         }
 
-        string packet;
-        try
+        if (stream.Dictionary.GetName(PdfNames.Subtype)?.Value != "XML")
         {
-            packet = System.Text.Encoding.UTF8.GetString(stream.DecodedSpan());
+            context.Report(
+                clause,
+                "Every Metadata stream shall carry the exact /Subtype /XML declaration.");
         }
-        catch (Exception exception) when (exception is IOException or InvalidOperationException)
-        {
-            context.Report(clause, "The metadata stream cannot be decoded.");
-            return;
-        }
-
-        CheckPacketHeader(context, packet, clause);
-        CheckPacketContents(context, packet, clause);
-        CheckDocumentInformation(context);
     }
 
     /// <summary>Clause 6.6.2.1: the two attributes the XMP specification deprecated.</summary>
@@ -92,20 +180,8 @@ internal static partial class PdfARules
         }
     }
 
-    private static void CheckPacketContents(PdfAContext context, string packet, string clause)
+    private static void CheckPacketContents(PdfAContext context, XDocument document)
     {
-        XDocument document;
-
-        try
-        {
-            document = XDocument.Parse(packet[Math.Max(0, packet.IndexOf("<x:xmpmeta", StringComparison.Ordinal))..]);
-        }
-        catch (System.Xml.XmlException exception)
-        {
-            context.Report(clause, $"The XMP packet is not well-formed XML: {exception.Message}");
-            return;
-        }
-
         CheckIdentification(context, document);
         CheckExtensionSchemas(context, document);
     }
@@ -122,15 +198,25 @@ internal static partial class PdfARules
     /// </remarks>
     private static void CheckIdentification(PdfAContext context, XDocument packet)
     {
-        string clause = context.Part == 4 ? "6.7.3" : context.Clause("6.7.11", "6.6.4");
-        XNamespace id = "http://www.aiim.org/pdfa/ns/id/";
+        string clause = context.Clause("6.7.11", "6.6.4", "6.7.3");
+        if (!PdfAXmpStructure.TryReadIdentification(
+                packet,
+                out PdfAXmpIdentification? identification,
+                out string? structureProblem))
+        {
+            context.Report(clause, $"The PDF/A identification is invalid: {structureProblem}");
+            return;
+        }
 
-        string? part = Value(packet, id + "part");
-        string? level = Value(packet, id + "conformance");
+        string? part = identification!.Part;
+        string? level = identification.Conformance;
 
         if (part is null)
         {
-            context.Report(clause, "The metadata does not carry pdfaid:part, so the file never claims to be PDF/A.");
+            context.Report(
+                clause,
+                "The rdf:Description document subject does not carry pdfaid:part, so the file " +
+                "never claims to be PDF/A.");
             return;
         }
 
@@ -139,7 +225,7 @@ internal static partial class PdfARules
 
         if (context.Part == 4)
         {
-            CheckPartFourIdentification(context, packet, id, level, clause);
+            CheckPartFourIdentification(context, identification.Revision, level, clause);
             return;
         }
 
@@ -155,19 +241,31 @@ internal static partial class PdfARules
     /// A plain PDF/A-4 file, the standard states outright, shall provide no conformance property.
     /// </summary>
     private static void CheckPartFourIdentification(
-        PdfAContext context, XDocument packet, XNamespace id, string? level, string clause)
+        PdfAContext context, string? revision, string? level, string clause)
     {
-        string? revision = Value(packet, id + "rev");
-
         if (revision is null)
         {
-            context.Report(clause, "The metadata does not carry pdfaid:rev, which part 4 requires.");
+            context.Report(
+                clause,
+                "The rdf:Description document subject does not carry pdfaid:rev, which part 4 requires.");
         }
         else if (revision.Length != 4 || !revision.All(char.IsAsciiDigit))
         {
             context.Report(
                 clause,
                 $"The metadata carries pdfaid:rev '{revision}'; it shall be the four digit year of the revision.");
+        }
+        else
+        {
+            string supportedRevision = PdfAProfile.SupportedPartFourRevision.ToString(
+                System.Globalization.CultureInfo.InvariantCulture);
+            if (!string.Equals(revision, supportedRevision, StringComparison.Ordinal))
+            {
+                context.Report(
+                    clause,
+                    $"The metadata carries unsupported pdfaid:rev '{revision}'; this validator implements " +
+                    $"ISO 19005-4:{supportedRevision}.");
+            }
         }
 
         if (context.Level == '\0')
@@ -190,12 +288,18 @@ internal static partial class PdfARules
     }
 
     /// <summary>
-    /// Clause 6.7.8 of part 1, 6.6.2.3.2 of parts 2 and 3. A property in a namespace the standard
+    /// Clause 6.7.8 of part 1, 6.6.2.3.2 of parts 2 and 3. Part 4 replaced this normative rule with
+    /// a different recommendation. A property in a namespace the earlier standards
     /// does not know is allowed, but only if the packet explains the namespace: otherwise the file
     /// carries information that nothing left in the world can interpret.
     /// </summary>
     private static void CheckExtensionSchemas(PdfAContext context, XDocument packet)
     {
+        // Part 4 replaced the old mandatory in-packet extension-schema description with a
+        // recommendation to associate an ISO 16684-2 schema file. The old rule is not normative.
+        if (context.Part == 4)
+            return;
+
         string clause = context.Clause("6.7.8", "6.6.2.3.2");
         XNamespace schema = "http://www.aiim.org/pdfa/ns/schema#";
 
@@ -221,7 +325,7 @@ internal static partial class PdfARules
 
         foreach (string used in UsedNamespaces(packet))
         {
-            if (KnownNamespaces.Contains(used, StringComparer.Ordinal) || described.Contains(used))
+            if (_knownNamespaces.Contains(used, StringComparer.Ordinal) || described.Contains(used))
                 continue;
 
             context.Report(clause, $"The metadata uses the schema {used} without describing it as an extension schema.");
@@ -246,23 +350,10 @@ internal static partial class PdfARules
     /// Clause 6.1.5 with 6.7.3 of part 1: the information dictionary and the packet have to tell the
     /// same story. Parts 2 and 3 only recommend it, so a disagreement is reported for part 1 alone.
     /// </summary>
-    private static void CheckDocumentInformation(PdfAContext context)
+    private static void CheckDocumentInformation(PdfAContext context, string packet)
     {
         if (context.Part != 1)
             return;
-
-        if (context.Document.Catalog.Get(PdfName.Get("Metadata")).AsStream is not { } stream)
-            return;
-
-        string packet;
-        try
-        {
-            packet = System.Text.Encoding.UTF8.GetString(stream.DecodedSpan());
-        }
-        catch (Exception exception) when (exception is IOException or InvalidOperationException)
-        {
-            return;
-        }
 
         Compare(context, packet, "Title", context.Document.Info.Title);
         Compare(context, packet, "Author", context.Document.Info.Author);
@@ -341,9 +432,4 @@ internal static partial class PdfARules
             $"The information dictionary says {entry} is '{value}', and the XMP packet does not say so.");
     }
 
-    private static string? Value(XDocument packet, XName name) =>
-        packet.Descendants(name).FirstOrDefault()?.Value.Trim() ??
-        packet.Descendants()
-            .Select(element => element.Attribute(name)?.Value)
-            .FirstOrDefault(value => value is not null);
 }

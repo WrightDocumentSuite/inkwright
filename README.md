@@ -4,14 +4,13 @@ A modern .NET 10 PDF library (Apache-2.0) with not one native dependency. The ar
 layered the way `System.Text.Json` is: COS primitives → streaming I/O → document model → add-ons
 that only the people who need them pay for.
 
-## What v1 does
+## What it does
 
-- **Reads anything**: cross-reference tables and streams, hybrid files, object streams, incremental
-  updates. A broken file does not throw — it is recovered by scanning, and `LoadDiagnostics` says
-  exactly what had to be repaired. Across a corpus of **7807 real files, 7800 open and round-trip
-  without a single refusal**; five are deliberately corrupt fixtures from other people's fuzzing
-  sets (no catalogue, no header) that are honestly rejected with `PdfFormatException`, and two more
-  are empty and never reach the parser.
+- **Reads broadly**: cross-reference tables and streams, hybrid files, object streams, incremental
+  updates. Recoverable structural damage is scanned and reported through `LoadDiagnostics`;
+  unrecoverable input raises `PdfFormatException`. Across a corpus of **7,807 real files, 7,800
+  open and 7,555 eligible files rewrite and reload**; five deliberately corrupt fixtures (no
+  catalogue or header) are rejected, and two empty files never reach the parser.
 - **Lossless editing**: an object the model never parsed is copied byte for byte on rewrite. Object
   numbers survive, and so do diagrams, annotations and everything the library did not understand.
 - **Incremental saving**: changes are appended and not one original byte moves — the only way not to
@@ -197,6 +196,7 @@ numbers move with the machine, so treat them as a shape rather than a promise.
 - [ISO 19005-4 conformance matrix (PDF/A-4)](https://github.com/WrightDocumentSuite/inkwright/blob/main/docs/pdfa4-matrix.md)
 - [ISO 14289 conformance matrix](https://github.com/WrightDocumentSuite/inkwright/blob/main/docs/pdfua-matrix.md)
 - [Reconciliation with ISO 32000-2](https://github.com/WrightDocumentSuite/inkwright/blob/main/docs/pdf20-audit.md)
+- [Verification baseline and regression policy](https://github.com/WrightDocumentSuite/inkwright/blob/main/docs/verification.md)
 - [Benchmarks](https://github.com/WrightDocumentSuite/inkwright/blob/main/docs/benchmarks.md)
 - [Building the NuGet packages](https://github.com/WrightDocumentSuite/inkwright/blob/main/docs/packaging.md)
 
@@ -229,7 +229,7 @@ samples/                       an invoice, low-level drawing, editing, a form, a
 The limits chosen on purpose are listed in
 [architecture.md](https://github.com/WrightDocumentSuite/inkwright/blob/main/docs/architecture.md):
 no rasterisation, no shaping of complex scripts, JPX and progressive JPEG pass through untouched,
-and certificate handlers are not supported.
+and trust-chain policy remains the caller's responsibility.
 
 ## Built on this
 

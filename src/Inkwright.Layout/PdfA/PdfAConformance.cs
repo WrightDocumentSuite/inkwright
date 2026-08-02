@@ -38,7 +38,10 @@ public enum PdfAConformance
     /// </summary>
     A4,
 
-    /// <summary>PDF/A-4e: as PDF/A-4, and 3D artwork is permitted (Annex B).</summary>
+    /// <summary>
+    /// PDF/A-4e: the engineering profile; 3D artwork and embedded files of any type are permitted
+    /// by Annex B.
+    /// </summary>
     A4E,
 
     /// <summary>PDF/A-4f: as PDF/A-4, and files of any type may be embedded (Annex A).</summary>
@@ -92,7 +95,8 @@ public static class PdfAConformanceExtensions
 
         /// <summary>
         /// Whether a file of any type may be embedded. Part 3 allows it at every level; part 4
-        /// confines it to PDF/A-4f (Annex A), which also requires that such a file be present.
+        /// grants it to PDF/A-4f in Annex A and PDF/A-4e in Annex B. Only PDF/A-4f requires the
+        /// EmbeddedFiles key to be present.
         /// </summary>
         public bool AllowsAnyEmbeddedFile =>
             conformance.Part == 3 || conformance is PdfAConformance.A4F or PdfAConformance.A4E;

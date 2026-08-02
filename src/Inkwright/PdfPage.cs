@@ -138,7 +138,7 @@ public sealed class PdfPage
         PdfValue contents = Dictionary.Get(PdfNames.Contents);
 
         if (contents.AsStream is { } single)
-            return single.Decode().ToArray();
+            return DecodeContent(single).ToArray();
 
         if (contents.AsArray is not { } array)
             return [];
@@ -153,7 +153,7 @@ public sealed class PdfPage
             if (array.Get(i).AsStream is not { } part)
                 continue;
 
-            ReadOnlySpan<byte> decoded = part.DecodedSpan();
+            ReadOnlySpan<byte> decoded = DecodeContent(part).Span;
             if (buffer.Length + decoded.Length > cap)
                 decoded = decoded[..(int)(cap - buffer.Length)];
 
@@ -162,6 +162,18 @@ public sealed class PdfPage
         }
 
         return buffer.ToArray();
+    }
+
+    private static ReadOnlyMemory<byte> DecodeContent(PdfStream stream)
+    {
+        ReadOnlyMemory<byte> decoded = stream.Decode();
+        if (stream.UndecodedFilter is { } filter)
+        {
+            throw new NotSupportedException(
+                $"A page content stream uses the unsupported filter /{filter.Value}.");
+        }
+
+        return decoded;
     }
 
     /// <summary>Replaces the page content with a single stream.</summary>

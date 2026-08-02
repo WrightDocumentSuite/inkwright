@@ -5,7 +5,7 @@ namespace Inkwright.Layout;
 
 internal static partial class PdfARules
 {
-    private static readonly string[] RenderingIntents =
+    private static readonly string[] _renderingIntents =
         ["RelativeColorimetric", "AbsoluteColorimetric", "Perceptual", "Saturation"];
 
     /// <summary>Clause 6.2: output intent, colour, graphics state, images, transparency.</summary>
@@ -26,7 +26,7 @@ internal static partial class PdfARules
     /// </summary>
     private static void CheckOutputIntent(PdfAContext context)
     {
-        string clause = context.Clause("6.2.2", "6.2.3");
+        string clause = context.Clause("6.2.2", "6.2.3", "6.2.3");
 
         // An output intent is not required in itself: the standard demands one only when device
         // colours are used, and clause 6.2.4 reports that. What is required is that an intent which
@@ -86,7 +86,7 @@ internal static partial class PdfARules
     /// <summary>Clause 6.2.8 of part 1, 6.2.5 of parts 2 and 3: what the graphics state may carry.</summary>
     private static void CheckExtGState(PdfAContext context)
     {
-        string clause = context.Clause("6.2.8", "6.2.5");
+        string clause = context.Clause("6.2.8", "6.2.5", "6.2.5");
 
         foreach (PdfDictionary state in context.Dictionaries)
         {
@@ -129,7 +129,9 @@ internal static partial class PdfARules
 
     private static void CheckRenderingIntent(PdfAContext context, string? intent)
     {
-        if (intent is null || RenderingIntents.Contains(intent, StringComparer.Ordinal))
+        // Part 4 no longer carries the rendering-intent restriction that parts 1 to 3 stated
+        // explicitly. PDF 2.0 validity belongs to the base-format validator, not a made-up 6.2.6.
+        if (context.Part == 4 || intent is null || _renderingIntents.Contains(intent, StringComparer.Ordinal))
             return;
 
         context.Report(
@@ -143,7 +145,7 @@ internal static partial class PdfARules
     /// </summary>
     private static void CheckContentOperators(PdfAContext context)
     {
-        string clause = context.Clause("6.2.10", "6.2.2");
+        string clause = context.Clause("6.2.10", "6.2.2", "6.2.2");
         var reported = new HashSet<string>(StringComparer.Ordinal);
 
         foreach (PdfAContentStream stream in PdfAContent.Enumerate(context))

@@ -152,7 +152,9 @@ A pre-cancelled `ExportMarkdownAsync` stops before render and directory creation
 starts is not transactional: files already written may remain on disk.
 
 Damage to decode/content on one page yields `ContentSkipped` with the page number and does not block
-processing the next pages. U+0000 never enters Markdown: it is replaced with U+FFFD.
+processing the next pages. This includes a page content stream whose remaining filter is unknown or
+is an image-only codec: its encoded bytes are never misread as PDF drawing operators. U+0000 never
+enters Markdown: it is replaced with U+FFFD.
 
 Diagnostics are part of the contract, not an exception log. They report untagged fallback,
 structural approximation, HTML fallback, skipped content, unsafe link, or an image

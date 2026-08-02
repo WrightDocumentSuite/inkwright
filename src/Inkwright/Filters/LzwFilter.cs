@@ -17,9 +17,31 @@ public static class LzwFilter
     /// <param name="earlyChange">Whether code width grows one code early, as most producers do.</param>
     /// <returns>The decoded bytes, truncated where the code stream stopped making sense.</returns>
     public static byte[] Decode(ReadOnlySpan<byte> data, bool earlyChange = true)
+        => Decode(data, earlyChange, PdfFilterLimits.Cap, strict: false, out _, out _);
+
+    /// <summary>Decodes no more than <paramref name="maxDecodedBytes"/> bytes.</summary>
+    internal static byte[] Decode(
+        ReadOnlySpan<byte> data,
+        bool earlyChange,
+        int maxDecodedBytes,
+        out bool limitExceeded,
+        out bool invalidData) =>
+        Decode(data, earlyChange, maxDecodedBytes, strict: true, out limitExceeded, out invalidData);
+
+    private static byte[] Decode(
+        ReadOnlySpan<byte> data,
+        bool earlyChange,
+        int maxDecodedBytes,
+        bool strict,
+        out bool limitExceeded,
+        out bool invalidData)
     {
-        int cap = PdfFilterLimits.Cap;
-        var writer = new ArrayBufferWriter<byte>(Math.Min(cap, Math.Max(256, data.Length * 3)));
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxDecodedBytes);
+        limitExceeded = false;
+        invalidData = false;
+        int cap = maxDecodedBytes;
+        int initialCapacity = Math.Min(cap, Math.Max(1, Math.Min(data.Length, 64 * 1024)));
+        var writer = new ArrayBufferWriter<byte>(initialCapacity);
 
         // Dictionary entries are (prefix, suffix) pairs, expanded on demand into a scratch buffer.
         int[] prefixes = ArrayPool<int>.Shared.Rent(MaxCode);
@@ -34,6 +56,7 @@ public static class LzwFilter
             int bitBuffer = 0;
             int bitCount = 0;
             int early = earlyChange ? 1 : 0;
+            bool firstCode = true;
 
             for (int i = 0; i <= data.Length; i++)
             {
@@ -52,8 +75,27 @@ public static class LzwFilter
                     int code = (bitBuffer >> (bitCount - codeWidth)) & ((1 << codeWidth) - 1);
                     bitCount -= codeWidth;
 
+                    if (firstCode)
+                    {
+                        firstCode = false;
+                        if (strict && code != ClearCode)
+                        {
+                            invalidData = true;
+                            return writer.WrittenSpan.ToArray();
+                        }
+                    }
+
                     if (code == EndOfData)
+                    {
+                        // §7.4.4.2 permits only zero padding after EOD in the final encoded byte.
+                        // Extra bytes or non-zero pad bits mean the declared stream contains more
+                        // encoded data than the LZW member consumes. Public callers still receive
+                        // the decoded prefix; the bounded path observes invalidData and fails closed.
+                        int paddingMask = bitCount == 0 ? 0 : (1 << bitCount) - 1;
+                        if (strict && (i != data.Length - 1 || (bitBuffer & paddingMask) != 0))
+                            invalidData = true;
                         return writer.WrittenSpan.ToArray();
+                    }
 
                     if (code == ClearCode)
                     {
@@ -68,7 +110,7 @@ public static class LzwFilter
                     {
                         length = Expand(code, prefixes, suffixes, scratch);
                     }
-                    else if (previous >= 0 && next < MaxCode)
+                    else if (code == next && previous >= 0 && next < MaxCode)
                     {
                         // The KwKwK case: the entry being defined is emitted before it exists.
                         length = Expand(previous, prefixes, suffixes, scratch);
@@ -77,11 +119,15 @@ public static class LzwFilter
                     }
                     else
                     {
+                        invalidData = true;
                         return writer.WrittenSpan.ToArray();
                     }
 
-                    if (writer.WrittenCount + length > cap)
+                    if (length > cap - writer.WrittenCount)
+                    {
+                        limitExceeded = true;
                         return writer.WrittenSpan.ToArray();
+                    }
 
                     writer.Write(scratch.AsSpan(0, length));
 
@@ -99,6 +145,7 @@ public static class LzwFilter
                 }
             }
 
+            invalidData = true;
             return writer.WrittenSpan.ToArray();
         }
         finally

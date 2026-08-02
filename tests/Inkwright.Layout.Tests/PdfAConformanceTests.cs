@@ -94,6 +94,23 @@ public class PdfAConformanceTests
         }
     }
 
+    [Fact]
+    public void RejectsAPartFourRevisionTheValidatorDoesNotImplement()
+    {
+        byte[] bytes = BuildArchival(PdfAConformance.A4, out _);
+        using PdfDocument document = PdfDocument.Load(bytes);
+        PdfStream metadata = document.Resolve(document.Catalog.Get(PdfName.Get("Metadata"))).AsStream!;
+        string packet = Encoding.UTF8.GetString(metadata.DecodedSpan())
+            .Replace(">2020</pdfaid:rev>", ">2099</pdfaid:rev>", StringComparison.Ordinal);
+        metadata.SetData(Encoding.UTF8.GetBytes(packet), compress: false);
+
+        Assert.Contains(
+            PdfAProfile.Validate(document, PdfAConformance.A4),
+            problem => problem.Clause == "6.7.3" &&
+                       problem.Message.Contains("unsupported pdfaid:rev '2099'", StringComparison.OrdinalIgnoreCase) &&
+                       problem.Message.Contains("19005-4:2020", StringComparison.Ordinal));
+    }
+
     /// <summary>A level letter on a plain PDF/A-4 file is itself a violation of §6.7.3.</summary>
     [Fact]
     public void RejectsAConformanceLevelOnAPlainPartFourFile()
@@ -106,13 +123,13 @@ public class PdfAConformanceTests
     }
 
     /// <summary>
-    /// Annex A.2: PDF/A-4f exists for documents built around an attachment. One that claims the
-    /// level and carries none has picked the wrong level rather than merely wasted one.
+    /// Annex A.2: PDF/A-4f requires an EmbeddedFiles key in the catalog name dictionary. An
+    /// otherwise valid PDF/A-4 document cannot claim the level without that exact marker.
     /// </summary>
     [Fact]
-    public void RequiresAnAttachmentFromAFileThatClaimsPartFourF()
+    public void RequiresEmbeddedFilesKeyFromAFileThatClaimsPartFourF()
     {
-        // A document with nothing embedded: sound as plain PDF/A-4, wrong level as PDF/A-4f.
+        // No EmbeddedFiles key: sound as plain PDF/A-4, wrong level as PDF/A-4f.
         byte[] bytes = BuildArchival(PdfAConformance.A4, out _);
 
         Assert.Contains(
@@ -123,8 +140,8 @@ public class PdfAConformanceTests
     }
 
     /// <summary>
-    /// §6.9 with Annex A: a plain PDF/A-4 file may only carry attachments that are themselves
-    /// PDF/A, and PDF/A-4f lifts exactly that restriction.
+    /// §6.9 with Annex A: a plain PDF/A-4 EmbeddedFiles entry must be PDF/A, and PDF/A-4f lifts
+    /// exactly that content restriction.
     /// </summary>
     [Fact]
     public void AdmitsAnyAttachmentTypeOnlyUnderPartFourF()
@@ -134,11 +151,12 @@ public class PdfAConformanceTests
 
         Assert.Contains(
             PdfAProfile.Validate(bytes, PdfAConformance.A4),
-            problem => problem.Clause == "6.9" && problem.Message.Contains("PDF/A-4f", StringComparison.Ordinal));
+            problem => problem.Clause == "6.9" &&
+                       problem.Message.Contains("not a PDF", StringComparison.OrdinalIgnoreCase));
 
         Assert.DoesNotContain(
             PdfAProfile.Validate(bytes, PdfAConformance.A4F),
-            problem => problem.Message.Contains("themselves PDF/A", StringComparison.Ordinal));
+            problem => problem.Message.Contains("Embedded PDF", StringComparison.Ordinal));
     }
 
     /// <summary>§6.1.12: the catalogue may override the header version, but only within PDF 2.0.</summary>

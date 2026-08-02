@@ -1,7 +1,9 @@
+using System.Buffers.Binary;
 using System.Security.Cryptography;
+using System.Security.Cryptography.Pkcs;
 using System.Security.Cryptography.X509Certificates;
-using Inkwright.Cos;
 using Inkwright.Content;
+using Inkwright.Cos;
 using Inkwright.Security;
 using Xunit;
 
@@ -176,6 +178,54 @@ public class PublicKeyEncryptionTests
         Assert.True(PublicKeySecurityHandler.TryOpen(
             encrypt, recipient, out StandardSecurityHandler? opened, out string? failure), failure);
         Assert.Equal(CryptMethod.AesV3, opened!.StreamMethod);
+    }
+
+    /// <summary>
+    /// ISO 32000-2 Table 20 fixes V=1 at 40 bits. For V=2 and V=3, Length defaults to 40 and may
+    /// select any multiple of eight from 40 through 128. A tolerant reader falls back to 40 when a
+    /// non-conforming producer writes any other value.
+    /// </summary>
+    [Theory]
+    [InlineData(1, null, 40)]
+    [InlineData(1, 128, 40)]
+    [InlineData(2, null, 40)]
+    [InlineData(3, null, 40)]
+    [InlineData(2, 56, 56)]
+    [InlineData(3, 128, 128)]
+    [InlineData(2, 55, 40)]
+    [InlineData(3, 32, 40)]
+    [InlineData(2, 136, 40)]
+    public void OpensLegacyPublicKeyEncryptionWithTheSpecifiedKeyLength(
+        int version,
+        int? declaredLength,
+        int expectedLength)
+    {
+        using X509Certificate2 recipient = CreateRecipient("CN=Legacy Recipient");
+        byte[] seed = Enumerable.Range(1, 20).Select(value => (byte)value).ToArray();
+        byte[] content = new byte[24];
+        seed.CopyTo(content, 0);
+        BinaryPrimitives.WriteInt32BigEndian(content.AsSpan(20), unchecked((int)0xFFFFF0C2));
+
+        var envelope = new EnvelopedCms(new ContentInfo(content));
+        envelope.Encrypt(new CmsRecipient(SubjectIdentifierType.IssuerAndSerialNumber, recipient));
+        byte[] recipientCms = envelope.Encode();
+
+        var encrypt = new PdfDictionary
+        {
+            [PdfNames.Filter] = PdfValue.Name(PdfName.Get("Adobe.PubSec")),
+            [PdfNames.SubFilter] = PdfValue.Name(PdfName.Get("adbe.pkcs7.s3")),
+            [PdfNames.V] = PdfValue.Integer(version),
+            [PdfName.Get("Recipients")] = PdfValue.Array(new PdfArray(PdfValue.String(recipientCms))),
+        };
+        if (declaredLength is not null)
+            encrypt.Set(PdfNames.Length, PdfValue.Integer(declaredLength.Value));
+
+        Assert.True(PublicKeySecurityHandler.TryOpen(
+            encrypt, recipient, out StandardSecurityHandler? opened, out string? failure), failure);
+
+        byte[] expected = SHA1.HashData([.. seed, .. recipientCms])[..(expectedLength / 8)];
+        Assert.Equal(expected, opened!.FileKey.ToArray());
+        Assert.Equal(CryptMethod.Rc4, opened.StreamMethod);
     }
 
     private static byte[] EncryptFor(

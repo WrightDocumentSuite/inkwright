@@ -15,6 +15,7 @@ public sealed class CMap
     private readonly Dictionary<uint, string> _text = [];
     private readonly Dictionary<uint, int> _cids = [];
     private readonly List<(uint Low, uint High, int FirstCid)> _cidRanges = [];
+    private List<string?>? _includedNames;
 
     /// <summary>The identity map every <c>Identity-H</c> font uses: two-byte codes equal to CIDs.</summary>
     public static CMap IdentityTwoByte { get; } = CreateIdentity(vertical: false);
@@ -33,6 +34,12 @@ public sealed class CMap
 
     /// <summary>Whether the map selects vertical writing mode, as its <c>WMode</c> entry says.</summary>
     public bool IsVertical { get; private set; }
+
+    /// <summary>Every operand supplied to <c>usecmap</c>; null records a non-name or missing operand.</summary>
+    internal IReadOnlyList<string?> IncludedNames => _includedNames ?? [];
+
+    /// <summary>The final inherited name, which is the one folded into this parsed map.</summary>
+    private string? IncludedName => _includedNames is { Count: > 0 } ? _includedNames[^1] : null;
 
     /// <summary>
     /// Reads the next code from a string, using the codespace ranges to decide how many bytes it
@@ -90,7 +97,6 @@ public sealed class CMap
         var map = new CMap();
         var operands = new List<PdfValue>(8);
         var parser = new PdfObjectParser(data);
-        string? included = null;
 
         while (true)
         {
@@ -120,8 +126,8 @@ public sealed class CMap
                 map.ReadCidChars(ref parser);
             else if (keyword.SequenceEqual("begincidrange"u8))
                 map.ReadCidRanges(ref parser);
-            else if (keyword.SequenceEqual("usecmap"u8) && operands.Count > 0)
-                included = operands[^1].AsName?.Value;
+            else if (keyword.SequenceEqual("usecmap"u8))
+                (map._includedNames ??= []).Add(operands.Count > 0 ? operands[^1].AsName?.Value : null);
             else if (keyword.SequenceEqual("def"u8) && operands.Count >= 2 && operands[^2].AsName?.Value == "WMode")
                 map.IsVertical = operands[^1].AsInteger == 1;
 
@@ -130,7 +136,7 @@ public sealed class CMap
 
         // The inherited map is folded in only once the whole program has been read, so that what the
         // map states itself always wins over what it borrows.
-        if (included is not null && Predefined(included) is { } parent)
+        if (map.IncludedName is not null && Predefined(map.IncludedName) is { } parent)
             map.IncludeMap(parent);
 
         if (map._codespaces.Count == 0)

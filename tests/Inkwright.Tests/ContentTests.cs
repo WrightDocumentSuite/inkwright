@@ -68,6 +68,33 @@ public class ContentTests
     }
 
     /// <summary>
+    /// ISO 32000-2 Tables 91 and 92 deliberately reuse <c>/I</c>: as a dictionary key it means
+    /// Interpolate, while as a colour-space value it means Indexed. Expanding values with the key
+    /// table silently turned this palette into an unknown colour space.
+    /// </summary>
+    [Fact]
+    public void ExpandsInlineImageNamesAccordingToTheirContext()
+    {
+        byte[] content =
+        [
+            .. "q BI /W 2 /H 1 /BPC 1 /CS [/I /RGB 1 <FF00000000FF>] ID "u8.ToArray(),
+            0b0100_0000,
+            .. " EI Q"u8.ToArray(),
+        ];
+
+        ContentOperations operations = ContentOperations.Parse(content);
+        PdfStream stream = operations.GetOperands(1)[0].AsStream!;
+        PdfArray colourSpace = stream.Dictionary.GetArray(PdfNames.ColorSpace)!;
+
+        Assert.Equal("Indexed", colourSpace.GetName(0)!.Value);
+        Assert.Equal("DeviceRGB", colourSpace.GetName(1)!.Value);
+
+        PdfImageData image = PdfImageReader.Decode(stream);
+        Assert.Equal(new byte[] { 255, 0, 0, 255 }, image.Pixels[..4]);
+        Assert.Equal(new byte[] { 0, 0, 255, 255 }, image.Pixels[4..8]);
+    }
+
+    /// <summary>
     /// The declared length of §8.9.7 is what settles where compressed data ends. Scanning for a
     /// lone <c>EI</c> is guesswork, and this payload is built to make the guess wrong: the encoded
     /// bytes carry a space, <c>EI</c> and another space in the middle of a literal run.

@@ -14,9 +14,10 @@ internal static partial class PdfARules
 
             if (page.Dictionary.ContainsKey(PdfName.Get("AA")))
             {
-                context.ReportPages(
-                    "6.5.2",
-                    $"Page {i + 1} carries an additional-actions dictionary.");
+                if (context.Part == 4)
+                    CheckPartFourAdditionalActions(context, page.Dictionary, $"Page {i + 1}");
+                else
+                    context.ReportPages("6.5.2", $"Page {i + 1} carries an additional-actions dictionary.");
             }
 
             foreach (PdfAnnotation annotation in page.Annotations)
@@ -60,6 +61,31 @@ internal static partial class PdfARules
 
         CheckAnnotationColour(context, annotation, where);
         CheckAnnotationAppearance(context, annotation, where);
+        CheckAnnotationActions(context, annotation, where);
+    }
+
+    /// <summary>
+    /// Part 4 permits AA on widgets, but still forbids their single A entry (6.4.1). Other
+    /// annotations may carry AA only for the six user-initiated events listed in 6.6.3.
+    /// </summary>
+    private static void CheckAnnotationActions(PdfAContext context, PdfAnnotation annotation, string where)
+    {
+        if (context.Part != 4)
+            return;
+
+        if (annotation.Type == PdfAnnotationType.Widget)
+        {
+            if (annotation.Dictionary.ContainsKey(PdfName.Get("A")))
+                context.Report("6.4.1", $"{where} carries an A entry; a PDF/A-4 widget may carry AA but not A.");
+
+            if (annotation.Dictionary.ContainsKey(PdfName.Get("AA")))
+                CheckPartFourAdditionalActions(context, annotation.Dictionary, where, fieldOrWidget: true);
+
+            return;
+        }
+
+        if (annotation.Dictionary.ContainsKey(PdfName.Get("AA")))
+            CheckPartFourAdditionalActions(context, annotation.Dictionary, where);
     }
 
     private static bool Forbidden(PdfAContext context, string subtype)
@@ -220,28 +246,94 @@ internal static partial class PdfARules
             if (fields.GetDictionary(i) is not { } field)
                 continue;
 
-            if (field.ContainsKey(PdfName.Get("A")) || field.ContainsKey(PdfName.Get("AA")))
+            bool hasAction = field.ContainsKey(PdfName.Get("A"));
+            bool hasAdditionalActions = field.ContainsKey(PdfName.Get("AA"));
+
+            if (context.Part == 4 && hasAction)
+            {
+                context.Report("6.4.1", "A form field carries an A entry; a PDF/A-4 field may carry AA but not A.");
+            }
+            else if (context.Part < 4 && (hasAction || hasAdditionalActions))
+            {
                 context.Report(clause, "A form field carries an action, and a field in an archival file may not act.");
+            }
+
+            if (context.Part == 4 && hasAdditionalActions)
+                CheckPartFourAdditionalActions(context, field, "A form field", fieldOrWidget: true);
 
             CheckFields(context, field.GetArray(PdfName.Get("Kids")), clause, depth + 1);
         }
     }
 
-    /// <summary>Clause 6.6 of part 1, 6.5 of parts 2 and 3: what a file may ask a reader to do.</summary>
+    /// <summary>
+    /// Clause 6.6 of parts 1 and 4, and 6.5 of parts 2 and 3: what a file may ask a reader to do.
+    /// </summary>
     private static void CheckActions(PdfAContext context)
     {
-        string clause = context.Clause("6.6.1", "6.5.1");
+        string clause = context.Clause("6.6.1", "6.5.1", "6.6.1");
+        var visitedActions = new HashSet<PdfDictionary>(ReferenceEqualityComparer.Instance);
 
         if (context.Document.Catalog.ContainsKey(PdfName.Get("AA")))
-            context.Report(context.Clause("6.6.2", "6.5.2"), "The catalogue carries an additional-actions dictionary.");
+        {
+            if (context.Part == 4)
+                CheckPartFourAdditionalActions(context, context.Document.Catalog, "The catalogue");
+            else
+                context.Report(context.Clause("6.6.2", "6.5.2"), "The catalogue carries an additional-actions dictionary.");
+        }
 
+        VisitAction(context.Document.Catalog.Get(PdfName.Get("OpenAction")));
+        VisitAdditionalActions(context.Document.Catalog);
+
+        foreach (PdfPage page in context.Document.Pages)
+        {
+            VisitAdditionalActions(page.Dictionary);
+            foreach (PdfAnnotation annotation in page.Annotations)
+            {
+                VisitAction(annotation.Dictionary.Get(PdfName.Get("A")));
+                VisitAdditionalActions(annotation.Dictionary);
+            }
+        }
+
+        if (context.Document.Catalog.GetDictionary(PdfName.Get("AcroForm")) is { } form)
+            VisitFields(form.GetArray(PdfName.Get("Fields")), 0);
+
+        if (context.Document.Catalog.GetDictionary(PdfName.Get("Outlines")) is { } outlines)
+        {
+            var visitedOutlines = new HashSet<PdfDictionary>(ReferenceEqualityComparer.Instance);
+            VisitOutline(outlines.Get(PdfName.Get("First")), 0, visitedOutlines);
+        }
+
+        if (context.Document.Catalog.GetDictionary(PdfName.Get("Names"))?
+                .GetDictionary(PdfName.Get("JavaScript")) is { } javaScriptNames)
+        {
+            var visitedNameTrees = new HashSet<PdfDictionary>(ReferenceEqualityComparer.Instance);
+            VisitNameTree(javaScriptNames, 0, visitedNameTrees);
+        }
+
+        // Type is optional on actions reached from the entries above. When it is present, however,
+        // it identifies an action even when an unusual extension hangs it somewhere else.
         foreach (PdfDictionary dictionary in context.Dictionaries)
         {
-            if (dictionary.GetName(PdfNames.Type)?.Value != "Action" && !dictionary.ContainsKey(PdfName.Get("S")))
-                continue;
+            if (dictionary.GetName(PdfNames.Type)?.Value == "Action")
+                VisitAction(PdfValue.Dictionary(dictionary));
+        }
+
+        void VisitAction(PdfValue value)
+        {
+            value = context.Resolve(value);
+            if (value.AsArray is { } actions)
+            {
+                for (int i = 0; i < actions.Count; i++)
+                    VisitAction(actions[i]);
+
+                return;
+            }
+
+            if (value.AsDictionary is not { } dictionary || !visitedActions.Add(dictionary))
+                return;
 
             if (dictionary.GetName(PdfName.Get("S"))?.Value is not { } action)
-                continue;
+                return;
 
             if (IsForbiddenAction(context, action))
                 context.Report(clause, $"The file carries a {action} action, which PDF/A does not permit.");
@@ -250,6 +342,110 @@ internal static partial class PdfARules
                 named is not ("NextPage" or "PrevPage" or "FirstPage" or "LastPage"))
             {
                 context.Report(clause, $"The named action {named} is not one of the four PDF/A allows.");
+            }
+
+            VisitAction(dictionary.Get(PdfName.Get("Next")));
+        }
+
+        void VisitAdditionalActions(PdfDictionary owner)
+        {
+            if (owner.GetDictionary(PdfName.Get("AA")) is not { } actions)
+                return;
+
+            foreach (PdfName trigger in actions.Keys.ToArray())
+                VisitAction(actions.Get(trigger));
+        }
+
+        void VisitFields(PdfArray? fields, int depth)
+        {
+            if (fields is null || depth > 32)
+                return;
+
+            for (int i = 0; i < fields.Count; i++)
+            {
+                if (fields.GetDictionary(i) is not { } field)
+                    continue;
+
+                VisitAction(field.Get(PdfName.Get("A")));
+                VisitAdditionalActions(field);
+                VisitFields(field.GetArray(PdfName.Get("Kids")), depth + 1);
+            }
+        }
+
+        void VisitOutline(
+            PdfValue value,
+            int depth,
+            HashSet<PdfDictionary> visited)
+        {
+            if (depth > 64 || context.Resolve(value).AsDictionary is not { } outline || !visited.Add(outline))
+                return;
+
+            VisitAction(outline.Get(PdfName.Get("A")));
+            VisitOutline(outline.Get(PdfName.Get("First")), depth + 1, visited);
+            VisitOutline(outline.Get(PdfName.Get("Next")), depth + 1, visited);
+        }
+
+        void VisitNameTree(
+            PdfDictionary node,
+            int depth,
+            HashSet<PdfDictionary> visited)
+        {
+            if (depth > 64 || !visited.Add(node))
+                return;
+
+            if (node.GetArray(PdfName.Get("Names")) is { } names)
+            {
+                for (int i = 1; i < names.Count; i += 2)
+                    VisitAction(names[i]);
+            }
+
+            if (node.GetArray(PdfName.Get("Kids")) is not { } kids)
+                return;
+
+            for (int i = 0; i < kids.Count; i++)
+            {
+                if (kids.GetDictionary(i) is { } child)
+                    VisitNameTree(child, depth + 1, visited);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Clause 6.6.3 permits additional actions outside widgets only when a person explicitly
+    /// initiates them: cursor enter/exit, button down/up, and focus gained/lost.
+    /// </summary>
+    private static void CheckPartFourAdditionalActions(
+        PdfAContext context,
+        PdfDictionary owner,
+        string where,
+        bool fieldOrWidget = false)
+    {
+        if (context.Resolve(owner.Get(PdfName.Get("AA"))).AsDictionary is not { } actions)
+        {
+            context.Report("6.6.3", $"{where} has an AA entry whose value is not an additional-actions dictionary.");
+            return;
+        }
+
+        foreach (PdfName trigger in actions.Keys.ToArray())
+        {
+            bool permitted = fieldOrWidget
+                ? trigger.Value is "E" or "X" or "D" or "U" or "Fo" or "Bl" or
+                    "PO" or "PC" or "PV" or "PI" or "O" or "C" or "K" or "F" or "V" or
+                    "WC" or "WS" or "DS" or "WP" or "DP"
+                : trigger.Value is "E" or "X" or "D" or "U" or "Fo" or "Bl";
+
+            if (!permitted)
+            {
+                context.Report(
+                    "6.6.3",
+                    $"{where} carries the {trigger.Value} additional-action trigger, which PDF/A-4 does not permit there.");
+            }
+
+            if (actions.Get(trigger).AsDictionary is null)
+            {
+                context.Report(
+                    "6.6.3",
+                    $"{where} carries {trigger.Value} whose value is not an action dictionary.");
             }
         }
     }

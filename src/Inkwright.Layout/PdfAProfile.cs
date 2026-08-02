@@ -96,8 +96,8 @@ public static class PdfAProfile
     /// <param name="conformance">The level being claimed.</param>
     public static IReadOnlyList<PdfAProblem> ValidateFile(string path, PdfAConformance conformance)
     {
-        using PdfDocument document = PdfDocument.Load(path, new PdfReadOptions { OpenLockedDocuments = true });
-        return Validate(document, conformance);
+        ArgumentException.ThrowIfNullOrWhiteSpace(path);
+        return Validate(File.ReadAllBytes(path), conformance);
     }
 
     /// <summary>Checks a file in memory against a conformance level.</summary>
@@ -106,16 +106,14 @@ public static class PdfAProfile
     public static IReadOnlyList<PdfAProblem> Validate(byte[] file, PdfAConformance conformance)
     {
         ArgumentNullException.ThrowIfNull(file);
-
-        using PdfDocument document = PdfDocument.Load(file, new PdfReadOptions { OpenLockedDocuments = true });
-        return Validate(document, conformance);
+        return PdfAValidator.Validate(file, conformance);
     }
 
     /// <summary>
     /// The year written into <c>pdfaid:rev</c>: the publication year of ISO 19005-4:2020. A dated
     /// revision of part 4 would change this and nothing else.
     /// </summary>
-    private const int PartFourRevision = 2020;
+    internal const int SupportedPartFourRevision = 2020;
 
     private static void ApplyMetadata(PdfDocument document, PdfAConformance conformance, PdfAOptions options)
     {
@@ -126,7 +124,7 @@ public static class PdfAProfile
             // Part 4 states the level only for its two extensions, and requires the revision year
             // that the earlier parts have no property for (6.7.3).
             PdfAConformance = conformance.Level == '\0' ? null : conformance.Level.ToString(),
-            PdfARevision = conformance.Part == 4 ? PartFourRevision : null,
+            PdfARevision = conformance.Part == 4 ? SupportedPartFourRevision : null,
             Language = options.Language,
         };
 

@@ -36,6 +36,111 @@ internal sealed class Jbig2IntDecoders
     internal Jbig2IntDecoder RefinementY { get; } = new();
 }
 
+/// <summary>The exported symbols and any bitmap coding context retained by one dictionary.</summary>
+internal sealed class Jbig2SymbolDictionaryResult
+{
+    internal Jbig2SymbolDictionaryResult(
+        Jbig2Bitmap[] exported,
+        Jbig2SymbolCodingContext? retainedContext)
+    {
+        Exported = exported;
+        RetainedContext = retainedContext;
+    }
+
+    internal Jbig2Bitmap[] Exported { get; }
+
+    internal Jbig2SymbolCodingContext? RetainedContext { get; }
+}
+
+/// <summary>
+/// A snapshot of the generic-region and generic-refinement MQ statistics retained at the end of
+/// a symbol dictionary (ITU-T T.88 §7.4.2.2). Integer decoder statistics are deliberately absent:
+/// the standard resets them for every dictionary, even when bitmap statistics are reused.
+/// </summary>
+internal sealed class Jbig2SymbolCodingContext
+{
+    private readonly Jbig2SymbolCodingConfiguration _configuration;
+    private readonly MqContext[] _generic;
+    private readonly MqContext[] _refinement;
+
+    internal Jbig2SymbolCodingContext(
+        Jbig2SymbolCodingConfiguration configuration,
+        MqContext[] generic,
+        MqContext[] refinement)
+    {
+        _configuration = configuration;
+        _generic = (MqContext[])generic.Clone();
+        _refinement = (MqContext[])refinement.Clone();
+    }
+
+    /// <summary>
+    /// Validates the header fields that define context indices, then gives the new dictionary an
+    /// independent copy. A retained dictionary may be referred to more than once, so mutating its
+    /// stored snapshot would make decoding depend on segment order.
+    /// </summary>
+    internal (MqContext[] Generic, MqContext[] Refinement) CopyFor(
+        Jbig2SymbolCodingConfiguration configuration)
+    {
+        configuration.EnsureCompatibleWith(_configuration);
+        return ((MqContext[])_generic.Clone(), (MqContext[])_refinement.Clone());
+    }
+}
+
+/// <summary>The symbol-dictionary header fields that determine bitmap MQ context addressing.</summary>
+internal sealed class Jbig2SymbolCodingConfiguration
+{
+    private readonly (int X, int Y)[] _at;
+    private readonly (int X, int Y)[] _refinementAt;
+
+    internal Jbig2SymbolCodingConfiguration(
+        bool huffman,
+        bool refineAggregate,
+        int template,
+        int refinementTemplate,
+        ReadOnlySpan<(int X, int Y)> at,
+        ReadOnlySpan<(int X, int Y)> refinementAt)
+    {
+        Huffman = huffman;
+        RefineAggregate = refineAggregate;
+        Template = template;
+        RefinementTemplate = refinementTemplate;
+        _at = at.ToArray();
+        _refinementAt = refinementAt.ToArray();
+    }
+
+    private bool Huffman { get; }
+
+    private bool RefineAggregate { get; }
+
+    private int Template { get; }
+
+    private int RefinementTemplate { get; }
+
+    /// <summary>
+    /// T.88 §7.4.2.2 requires every field capable of changing a context index to match the source
+    /// dictionary. Treating a mismatch as fresh state would decode plausible but incorrect pixels.
+    /// </summary>
+    internal void EnsureCompatibleWith(Jbig2SymbolCodingConfiguration retained)
+    {
+        Require(Huffman == retained.Huffman, "SDHUFF");
+        Require(RefineAggregate == retained.RefineAggregate, "SDREFAGG");
+        Require(Template == retained.Template, "SDTEMPLATE");
+        Require(RefinementTemplate == retained.RefinementTemplate, "SDRTEMPLATE");
+        Require(_at.AsSpan().SequenceEqual(retained._at), "SDAT");
+        Require(_refinementAt.AsSpan().SequenceEqual(retained._refinementAt), "SDRAT");
+    }
+
+    private static void Require(bool condition, string field)
+    {
+        if (!condition)
+        {
+            throw new NotSupportedException(
+                $"A JBIG2 symbol dictionary cannot reuse a bitmap coding context because {field} " +
+                "differs from the retained dictionary.");
+        }
+    }
+}
+
 /// <summary>
 /// The symbol dictionary decoding procedure of ITU-T T.88 §6.5. A dictionary holds the distinct
 /// shapes a scanned page is built from — usually the letters — and a text region then places them.
@@ -51,16 +156,23 @@ internal static class Jbig2SymbolDictionary
     /// <summary>How many symbols one dictionary may define before it is taken to be malformed.</summary>
     private const int MaxSymbols = 100_000;
 
+    /// <summary>How many contexts the widest generic-region template addresses.</summary>
+    private const int GenericContextCount = 1 << 16;
+
     /// <summary>Decodes a symbol dictionary segment.</summary>
     /// <param name="data">The segment's data part.</param>
     /// <param name="imported">Symbols this dictionary imports from the dictionaries it refers to.</param>
     /// <param name="custom">The tables this segment's referred-to table segments supply, in order.</param>
-    /// <returns>The symbols the dictionary exports, in the order the standard defines.</returns>
+    /// <param name="reusedContext">
+    /// The last referred-to symbol dictionary's retained bitmap context, or null when it retained none.
+    /// </param>
+    /// <returns>The exported symbols and, when requested, the retained bitmap coding context.</returns>
     /// <exception cref="NotSupportedException">The dictionary uses a variant this decoder refuses.</exception>
-    internal static Jbig2Bitmap[] Decode(
+    internal static Jbig2SymbolDictionaryResult Decode(
         ReadOnlyMemory<byte> data,
         IReadOnlyList<Jbig2Bitmap> imported,
-        IReadOnlyList<Jbig2HuffmanTable> custom)
+        IReadOnlyList<Jbig2HuffmanTable> custom,
+        Jbig2SymbolCodingContext? reusedContext = null)
     {
         ReadOnlySpan<byte> span = data.Span;
 
@@ -75,20 +187,30 @@ internal static class Jbig2SymbolDictionary
         int bitmapSizeChoice = (flags >> 6) & 1;
         int aggregateChoice = (flags >> 7) & 1;
         bool contextUsed = ((flags >> 8) & 1) != 0;
+        bool contextRetained = ((flags >> 9) & 1) != 0;
         int template = (flags >> 10) & 3;
         int refinementTemplate = (flags >> 12) & 1;
 
+        if (huffman && !refineAggregate && (contextUsed || contextRetained))
+        {
+            string flagName = contextUsed ? "used" : "retained";
+            throw new NotSupportedException(
+                $"The JBIG2 bitmap coding context {flagName} bit must be zero when " +
+                "SDHUFF=1 and SDREFAGG=0.");
+        }
+
         int position = 2;
         Span<(int X, int Y)> at = stackalloc (int, int)[4];
+        int atCount = 0;
 
         // The template pixels are only present in the arithmetic variant.
         if (!huffman)
         {
-            int pairs = template == 0 ? 4 : 1;
-            if (position + (pairs * 2) > span.Length)
+            atCount = template == 0 ? 4 : 1;
+            if (position + (atCount * 2) > span.Length)
                 throw new NotSupportedException("A JBIG2 symbol dictionary segment is truncated.");
 
-            for (int i = 0; i < pairs; i++)
+            for (int i = 0; i < atCount; i++)
             {
                 at[i] = ((sbyte)span[position], (sbyte)span[position + 1]);
                 position += 2;
@@ -96,9 +218,11 @@ internal static class Jbig2SymbolDictionary
         }
 
         Span<(int X, int Y)> refinementAt = stackalloc (int, int)[2];
+        int refinementAtCount = 0;
 
         if (refineAggregate && refinementTemplate == 0)
         {
+            refinementAtCount = 2;
             if (position + 4 > span.Length)
                 throw new NotSupportedException("A JBIG2 symbol dictionary segment is truncated.");
 
@@ -119,11 +243,33 @@ internal static class Jbig2SymbolDictionary
         if (defined < 0 || defined > MaxSymbols || exported < 0 || exported > MaxSymbols)
             throw new NotSupportedException($"A JBIG2 symbol dictionary claims {defined} symbols.");
 
-        // Contexts are shared with an earlier dictionary only when the flags ask for it, which
-        // almost nothing does; refusing is safer than silently starting from a fresh estimate.
+        var configuration = new Jbig2SymbolCodingConfiguration(
+            huffman,
+            refineAggregate,
+            template,
+            refinementTemplate,
+            at[..atCount],
+            refinementAt[..refinementAtCount]);
+
+        MqContext[] genericContexts;
+        MqContext[] refinementContexts;
+
         if (contextUsed)
-            throw new NotSupportedException(
-                "JBIG2 symbol dictionaries that reuse another's coding context are not decoded.");
+        {
+            if (reusedContext is null)
+            {
+                throw new NotSupportedException(
+                    "A JBIG2 symbol dictionary requests bitmap coding-context reuse, but its last " +
+                    "referred-to symbol dictionary did not retain one.");
+            }
+
+            (genericContexts, refinementContexts) = reusedContext.CopyFor(configuration);
+        }
+        else
+        {
+            genericContexts = MqDecoder.CreateContexts(GenericContextCount);
+            refinementContexts = MqDecoder.CreateContexts(Jbig2TextRegion.RefinementContextCount);
+        }
 
         int codeLength = Jbig2TextRegion.CodeLength(imported.Count + defined);
         ReadOnlyMemory<byte> body = data[position..];
@@ -168,9 +314,24 @@ internal static class Jbig2SymbolDictionary
         }
 
         var builder = new Jbig2SymbolReader(
-            reader, bits, imported, defined, template, at, refineAggregate, refinementTemplate, refinementAt);
+            reader,
+            bits,
+            imported,
+            defined,
+            template,
+            at[..atCount],
+            refineAggregate,
+            refinementTemplate,
+            refinementAt[..refinementAtCount],
+            genericContexts,
+            refinementContexts);
 
-        return builder.Run(exported);
+        Jbig2Bitmap[] symbols = builder.Run(exported);
+        Jbig2SymbolCodingContext? retained = contextRetained
+            ? new Jbig2SymbolCodingContext(configuration, genericContexts, refinementContexts)
+            : null;
+
+        return new Jbig2SymbolDictionaryResult(symbols, retained);
     }
 }
 
@@ -178,7 +339,6 @@ internal static class Jbig2SymbolDictionary
 internal sealed class Jbig2SymbolReader
 {
     private const long MaxSymbolPixels = 16L * 1024 * 1024;
-    private const int GenericContextCount = 1 << 16;
 
     private readonly Jbig2ValueReader _reader;
     private readonly Jbig2BitReader? _bits;
@@ -189,9 +349,8 @@ internal sealed class Jbig2SymbolReader
     private readonly bool _refineAggregate;
     private readonly int _refinementTemplate;
     private readonly (int X, int Y)[] _refinementAt;
-    private readonly MqContext[] _generic = MqDecoder.CreateContexts(GenericContextCount);
-    private readonly MqContext[] _refinement =
-        MqDecoder.CreateContexts(Jbig2TextRegion.RefinementContextCount);
+    private readonly MqContext[] _generic;
+    private readonly MqContext[] _refinement;
 
     internal Jbig2SymbolReader(
         Jbig2ValueReader reader,
@@ -202,7 +361,9 @@ internal sealed class Jbig2SymbolReader
         ReadOnlySpan<(int X, int Y)> at,
         bool refineAggregate,
         int refinementTemplate,
-        ReadOnlySpan<(int X, int Y)> refinementAt)
+        ReadOnlySpan<(int X, int Y)> refinementAt,
+        MqContext[] genericContexts,
+        MqContext[] refinementContexts)
     {
         _reader = reader;
         _bits = bits;
@@ -213,6 +374,8 @@ internal sealed class Jbig2SymbolReader
         _refineAggregate = refineAggregate;
         _refinementTemplate = refinementTemplate;
         _refinementAt = refinementAt.ToArray();
+        _generic = genericContexts;
+        _refinement = refinementContexts;
     }
 
     /// <summary>Decodes every height class, then works out which symbols are exported (§6.5.5).</summary>

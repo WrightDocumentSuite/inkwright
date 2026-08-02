@@ -22,10 +22,17 @@ internal static class CmsBuilder
         // an external signer only ever answers with a signature over a digest.
         if (signer is not CertificateSigner)
         {
-            if (options.Level == PdfSignatureLevel.Timestamped)
-                throw new NotSupportedException("Timestamping an externally signed document is not supported yet.");
+            byte[] encoded = DetachedCms.Build(content.Span, options, signer);
+            if (options.Level != PdfSignatureLevel.Timestamped)
+                return encoded;
 
-            return DetachedCms.Build(content.Span, options, signer);
+            // Adding an unsigned attribute does not need the signing key. Decode the manually
+            // produced detached CMS with its original content so the BCL can build the RFC 3161
+            // request from the existing signature value, then append the token in-place.
+            var externalSignedData = new SignedCms(new ContentInfo(content.ToArray()), detached: true);
+            externalSignedData.Decode(encoded);
+            AddTimestamp(externalSignedData, options);
+            return externalSignedData.Encode();
         }
 
         var signedData = new SignedCms(new ContentInfo(content.ToArray()), detached: true);

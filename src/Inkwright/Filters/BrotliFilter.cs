@@ -1,5 +1,6 @@
 using System.Buffers;
 using System.IO.Compression;
+using System.Runtime.InteropServices;
 
 namespace Inkwright.Filters;
 
@@ -15,17 +16,28 @@ public static class BrotliFilter
     /// <param name="data">The compressed bytes.</param>
     /// <returns>The decompressed bytes, truncated at the first unrecoverable position.</returns>
     public static byte[] Decode(ReadOnlySpan<byte> data)
+        => Decode(data.ToArray(), PdfFilterLimits.Cap, out _);
+
+    /// <summary>Decompresses no more than <paramref name="maxDecodedBytes"/> bytes.</summary>
+    internal static byte[] Decode(
+        ReadOnlyMemory<byte> data,
+        int maxDecodedBytes,
+        out bool limitExceeded)
     {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxDecodedBytes);
+        limitExceeded = false;
+
         if (data.Length == 0)
             return [];
 
-        int cap = PdfFilterLimits.Cap;
-        var writer = new ArrayBufferWriter<byte>(Math.Min(cap, Math.Max(256, data.Length * 4)));
+        int cap = maxDecodedBytes;
+        int initialCapacity = Math.Min(cap, Math.Max(1, Math.Min(data.Length, 64 * 1024)));
+        var writer = new ArrayBufferWriter<byte>(initialCapacity);
         byte[] buffer = ArrayPool<byte>.Shared.Rent(64 * 1024);
 
         try
         {
-            using var input = new MemoryStream(data.ToArray(), writable: false);
+            using MemoryStream input = Input(data);
             using var decompressor = new BrotliStream(input, CompressionMode.Decompress);
 
             while (true)
@@ -45,9 +57,10 @@ public static class BrotliFilter
                 if (read == 0)
                     break;
 
-                if (writer.WrittenCount + read > cap)
+                if (read > cap - writer.WrittenCount)
                 {
                     writer.Write(buffer.AsSpan(0, cap - writer.WrittenCount));
+                    limitExceeded = true;
                     break;
                 }
 
@@ -64,5 +77,20 @@ public static class BrotliFilter
         {
             ArrayPool<byte>.Shared.Return(buffer);
         }
+    }
+
+    private static MemoryStream Input(ReadOnlyMemory<byte> data)
+    {
+        if (MemoryMarshal.TryGetArray(data, out ArraySegment<byte> segment))
+        {
+            return new MemoryStream(
+                segment.Array!,
+                segment.Offset,
+                segment.Count,
+                writable: false,
+                publiclyVisible: true);
+        }
+
+        return new MemoryStream(data.ToArray(), writable: false);
     }
 }

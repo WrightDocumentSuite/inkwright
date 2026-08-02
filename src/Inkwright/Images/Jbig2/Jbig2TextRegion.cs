@@ -121,7 +121,10 @@ internal static class Jbig2TextRegion
             int currentS = 0;
             bool first = true;
 
-            while (placed < parameters.Instances)
+            // T.88 §6.4.5 ends each strip with an OOB-coded IDS value.  This includes the
+            // strip that contains the last advertised instance: the OOB belongs to the coded
+            // strip syntax and must be consumed before the caller resumes reading its stream.
+            while (true)
             {
                 if (first)
                 {
@@ -136,6 +139,10 @@ internal static class Jbig2TextRegion
                     // Out of band ends the strip rather than naming a gap.
                     if (Jbig2IntDecoder.IsOutOfBand(gap))
                         break;
+
+                    if (placed >= parameters.Instances)
+                        throw new NotSupportedException(
+                            "A JBIG2 text region continues past its advertised instance count.");
 
                     currentS += gap + parameters.SOffset;
                 }

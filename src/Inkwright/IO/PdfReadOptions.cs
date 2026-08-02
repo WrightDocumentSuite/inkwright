@@ -1,4 +1,5 @@
 using System.Security.Cryptography.X509Certificates;
+using Inkwright.Cos;
 using Inkwright.Diagnostics;
 
 namespace Inkwright.IO;
@@ -23,7 +24,9 @@ public sealed class PdfReadOptions
 
     /// <summary>
     /// Whether to fall back on scanning the file for objects when the cross-reference data is
-    /// unusable. Turning this off makes damaged files raise <see cref="PdfFormatException"/>.
+    /// unusable. Turning this off also rejects direct trailer <c>Root</c>, catalog <c>Pages</c>, and
+    /// page-tree <c>Kids</c> objects instead of normalizing them, and makes damaged files raise
+    /// <see cref="PdfFormatException"/>.
     /// </summary>
     public bool Recover { get; init; } = true;
 
@@ -40,4 +43,10 @@ public sealed class PdfReadOptions
 
     /// <summary>How many warnings to retain before only counting them.</summary>
     public int MaxWarnings { get; init; } = 1000;
+
+    /// <summary>
+    /// Internal fail-closed decoding hook used when recursively opening an untrusted embedded PDF.
+    /// Normal public reads leave it unset and keep the tolerant decoder.
+    /// </summary>
+    internal IPdfStreamDecodePolicy? StreamDecodePolicy { get; init; }
 }
