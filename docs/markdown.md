@@ -88,6 +88,27 @@ var options = new MarkdownExportOptions
 `RequireTagged` rejects a file without a structure tree. `PlainText` deliberately ignores tags and always
 uses page text. This is useful for comparison but is also flagged in diagnostics.
 
+Layout inference is available as an explicit untagged fallback:
+
+```csharp
+MarkdownDocument markdown = pdf.ToMarkdown(new MarkdownExportOptions
+{
+    StructureMode = MarkdownStructureMode.InferLayout,
+});
+```
+
+`InferLayout` still uses the structure tree whenever one exists, so Tagged PDF keeps the same strict,
+predictable rendering path. Only an untagged document is reconstructed from positioned glyphs. The
+heuristics detect a stable two-column gutter, larger or bold headings, common bullet and ordered-list
+markers, and repeated cell alignments for GFM pipe tables. With `MarkdownFlavor.CommonMark`, inferred
+tables use the same HTML fallback policy as tagged tables. Consecutive text lines in one column are
+joined into paragraphs, including conservative lowercase hyphen rejoining.
+
+Inferred structure is deliberately reported as `StructureApproximated`. It does not recover semantics
+that are absent from the file, and complex tables, nested lists, irregular multi-column layouts, or
+font-size-only decoration may be classified differently from an author's intent. Applications that
+need a reproducible semantic contract should keep the default `PreferTagged` or use `RequireTagged`.
+
 ## Options
 
 ```csharp

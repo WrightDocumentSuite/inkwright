@@ -178,6 +178,38 @@ document.Pages.ImportAll(source);
 
 Bookmarks, destinations, fields, and structure move too — details in [merging.md](merging.md).
 
+### Painted rules
+
+`page.ExtractLines()` reports straight vector rules in visible top-left page coordinates. It walks
+nested Form XObjects and understands both ordinary stroked paths and the thin dark filled
+rectangles many Office/PDF producers use for table borders. Pale fills and large filled rectangles
+are not promoted to lines, so cell shading does not become a black frame during fixed-layout
+conversion.
+
+```csharp
+foreach (PdfLineSegment line in page.ExtractLines())
+    Console.WriteLine($"{line.Start} → {line.End}, {line.Width:0.##} pt");
+```
+
+### Bordered tables
+
+`page.ExtractTables()` connects those painted rules into grids and assigns visible glyphs to the
+cells they enclose. An absent internal rule becomes a row or column span, so a multi-level header
+does not have to be flattened merely because the PDF has no structure tree. Returned coordinates
+use the same rotation-normalised top-left page space as `ExtractLines()`.
+
+```csharp
+foreach (PdfTable table in page.ExtractTables())
+{
+    foreach (PdfTableCell cell in table.Cells)
+        Console.WriteLine($"r{cell.Row} c{cell.Column} {cell.RowSpan}x{cell.ColumnSpan}: {cell.Text}");
+}
+```
+
+The extractor is deliberately conservative: a lone decorative rectangle is ignored, curved or
+borderless tables are not guessed, and safety limits in `TableExtractionOptions` cap pathological
+grids. Applications can combine this geometry result with Tagged PDF structure when both exist.
+
 ## How Pages Are Named
 
 Page number and page label are different things. A document whose front matter runs i, ii, iii and the main body starts again at one says so here; a viewer showing "page 3 of 40" shows exactly that, not the index.

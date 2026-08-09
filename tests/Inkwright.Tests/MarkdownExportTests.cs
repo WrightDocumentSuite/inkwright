@@ -1,5 +1,7 @@
 using System.Text;
+using Inkwright.Content;
 using Inkwright.Cos;
+using Inkwright.Fonts;
 using Inkwright.Images;
 using Inkwright.Markdown;
 using Inkwright.Tagging;
@@ -33,6 +35,66 @@ public class MarkdownExportTests
         {
             StructureMode = MarkdownStructureMode.RequireTagged,
         }));
+    }
+
+    [Fact]
+    public void InferLayoutProjectsUntaggedHeadingsListsAndTables()
+    {
+        using PdfDocument document = PdfDocument.Load(BuildUntaggedLayoutDocument());
+
+        MarkdownDocument markdown = document.ToMarkdown(new MarkdownExportOptions
+        {
+            StructureMode = MarkdownStructureMode.InferLayout,
+        });
+
+        Assert.Equal(
+            "# Report title\n\n" +
+            "First paragraph line continues on its second line.\n\n" +
+            "- First item\n" +
+            "- Second item\n\n" +
+            "| Name | Score |\n" +
+            "| --- | --- |\n" +
+            "| Ada | 10 |\n" +
+            "| Bob | 20 |\n",
+            markdown.Text);
+        MarkdownExportWarning warning = Assert.Single(markdown.Diagnostics);
+        Assert.Equal(MarkdownExportWarningKind.StructureApproximated, warning.Kind);
+        Assert.Equal("Inferred layout", warning.Subject);
+    }
+
+    [Fact]
+    public void InferLayoutStillPrefersTaggedStructure()
+    {
+        using PdfDocument document = PdfDocument.Load(BuildTaggedDocument());
+
+        MarkdownDocument markdown = document.ToMarkdown(new MarkdownExportOptions
+        {
+            StructureMode = MarkdownStructureMode.InferLayout,
+        });
+
+        Assert.Equal(
+            "# A heading\n\nFirst \\*draft\\*\n\nreplacement \\[ok\\]\n",
+            markdown.Text);
+        Assert.Empty(markdown.Diagnostics);
+    }
+
+    [Fact]
+    public void InferLayoutUsesHtmlForTablesInCommonMark()
+    {
+        using PdfDocument document = PdfDocument.Load(BuildUntaggedLayoutDocument());
+
+        MarkdownDocument markdown = document.ToMarkdown(new MarkdownExportOptions
+        {
+            Flavor = MarkdownFlavor.CommonMark,
+            StructureMode = MarkdownStructureMode.InferLayout,
+        });
+
+        Assert.Contains("<table>\n  <tr>\n    <th>Name</th>", markdown.Text, StringComparison.Ordinal);
+        Assert.Contains("<td>Ada</td>", markdown.Text, StringComparison.Ordinal);
+        Assert.Contains(markdown.Diagnostics, warning =>
+            warning.Kind == MarkdownExportWarningKind.StructureApproximated);
+        Assert.Contains(markdown.Diagnostics, warning =>
+            warning.Kind == MarkdownExportWarningKind.HtmlFallbackUsed);
     }
 
     [Fact]
@@ -423,6 +485,32 @@ public class MarkdownExportTests
         }));
     }
 
+    private static byte[] BuildUntaggedLayoutDocument()
+    {
+        using var document = PdfDocument.Create();
+        PdfPage page = document.Pages.Add();
+        PdfFont font = document.Fonts.Helvetica;
+
+        using (ContentCanvas canvas = ContentCanvas.ForPage(page))
+        {
+            canvas.DrawText("Report title", 60, 740, font, 24);
+            canvas.DrawText("First paragraph line continues on", 60, 700, font, 12);
+            canvas.DrawText("its second line.", 60, 684, font, 12);
+            canvas.DrawText("- First item", 70, 640, font, 12);
+            canvas.DrawText("- Second item", 70, 622, font, 12);
+
+            canvas.DrawText("Name", 60, 570, font, 12);
+            canvas.DrawText("Score", 250, 570, font, 12);
+            canvas.DrawText("Ada", 60, 550, font, 12);
+            canvas.DrawText("10", 250, 550, font, 12);
+            canvas.DrawText("Bob", 60, 530, font, 12);
+            canvas.DrawText("20", 250, 530, font, 12);
+            canvas.Commit();
+        }
+
+        return document.ToArray();
+    }
+
     private static byte[] BuildUntaggedActualTextWithNull()
     {
         using var document = PdfDocument.Create();
@@ -711,7 +799,7 @@ public class MarkdownExportTests
             "/P <</MCID 0>> BDC BT /F1 12 Tf 60 650 Td (form text) Tj ET EMC\n"), compress: false);
         form.Dictionary.Set(PdfNames.Type, PdfValue.Name(PdfNames.XObject));
         form.Dictionary.Set(PdfNames.Subtype, PdfValue.Name(PdfNames.Form));
-        form.Dictionary.Set(PdfNames.BBox, PdfArray.OfNumbers(0, 0, 300, 300));
+        form.Dictionary.Set(PdfNames.BBox, PdfArray.OfNumbers(0, 0, 300, 700));
         PdfObjectId formId = document.AddObject(form);
         var objects = new PdfDictionary(1);
         objects.Set(PdfName.Get("Fm0"), PdfValue.Reference(formId));

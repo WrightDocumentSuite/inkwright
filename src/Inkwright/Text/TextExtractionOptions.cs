@@ -31,6 +31,13 @@ public sealed record TextExtractionOptions
     public bool UseLogicalOrder { get; init; }
 
     /// <summary>
+    /// Whether to infer physical reading order from glyph geometry when no logical structure is
+    /// being used. The inference detects a stable page gutter and reads each column top-to-bottom.
+    /// <see cref="UseLogicalOrder"/> takes priority when both options are enabled.
+    /// </summary>
+    public bool InferReadingOrder { get; init; }
+
+    /// <summary>
     /// Whether <c>ActualText</c> on marked-content sequences replaces the glyphs enclosed by that
     /// sequence. Replacement text remains attached to the enclosing MCID.
     /// </summary>

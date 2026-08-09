@@ -130,5 +130,7 @@ Do not use a wildcard or `--skip-duplicate` for a release: either can hide that 
 an already occupied version was selected. NuGet versions are immutable, and the API secret must not
 be stored in the repository or passed as an MSBuild property that ends up in logs.
 
-Symbol packages are not configured yet. The ordinary packages install and run without them, but a
-future release should add Source Link and `.snupkg` output if source-level debugging is required.
+Packing also produces one `.snupkg` beside every ordinary package. Source Link maps its portable PDB
+to the exact public repository commit recorded in the package metadata, so publish each symbol
+package together with its matching `.nupkg`. The release check must inspect the repository URL and
+commit in both the package and PDB before either artifact is pushed.

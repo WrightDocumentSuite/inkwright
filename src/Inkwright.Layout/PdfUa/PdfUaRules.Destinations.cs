@@ -19,7 +19,7 @@ internal static partial class PdfUaRules
     /// </summary>
     internal static void CheckDestinations(PdfUaContext context)
     {
-        foreach ((PdfPage _, PdfDictionary annotation) in context.Annotations())
+        foreach ((PdfPage _, PdfDictionary annotation, PdfObjectId _) in context.Annotations())
         {
             CheckDestination(context, annotation.Get(PdfName.Get("Dest")));
             CheckAction(context, annotation.Get(PdfName.Get("A")));

@@ -69,21 +69,25 @@ Rules live in `src/Inkwright.Layout/PdfUa/`, one file per requirement group.
 | 7.10 | 8.7 | Layer configurations have names | V | required when `Configs` is present |
 | 7.10 | 8.7 | Key `AS` is not present | V | |
 | 7.11 | 8.14 | Attachments have `F` and `UF` | V | |
-| 7.11 | 8.14 | Attachments have `Desc` | A | the standard says "should" |
+| 7.11 | 8.14.1 | Attachments have `Desc` | GV | advice in UA-1; required in UA-2 for file specifications in the `EmbeddedFiles` name tree |
 | 7.11 | 8.14 | Attachment is accessible on its own | H | depends on its format |
 | 7.13 | 8.10 | Signature appearance meets content requirements | H | |
 | 7.14 | 8.10 | Non-interactive forms tagged with `PrintField` attributes | H | |
 | 7.15 | n/a | Dynamic XFA forms forbidden | V | looks for `dynamicRender` with value `required`; in UA-2 XFA is forbidden entirely |
 | 7.17 | 8.12.2 | Long document has a table of contents | A | advisory at ten or more pages |
 | 7.17 | 8.12.3 | Page labels are semantically appropriate | H | |
-| 7.18.1 | 8.9.2 | Visible annotation has a description | V | hidden, out-of-view, and popup excluded |
-| 7.18.2 | 8.9.2 | `TrapNet` forbidden | V | |
-| 7.18.3 | 8.9.2.2 | On pages with annotations `Tabs` equals `S` | V | |
-| 7.18.4 | 8.10 | Widgets nested in `Form` elements | V | presence of `Form` checked when widgets exist |
-| 7.18.5 | 8.9.2.4 | Links have a description | V | |
+| 7.18.1 | 8.9.2 | Real-content annotation is represented exactly once as a whole object in the structure tree | GV | `StructureElement.AddAnnotation` and `StructureTreeBuilder.AddAnnotation` author the complete bidirectional link; validation checks one `OBJR`, its page, the annotation's `StructParent`, the exact `ParentTree` owner, duplicate keys, and stale annotation targets no longer present in a page's `Annots` array, while explicit `XObject` targets remain valid whole-object content |
+| 7.18.1 | 8.9.2.3 | Annotation has the structure element required by its semantics | V | markup uses `Annot`, widgets use `Form`, and links use `Link` or `Reference`; UA-2 also rejects `Popup` in the structure tree |
+| 7.18.1 | 8.9.2.2 | Artifact annotations are absent from real-content structure | V | UA-2 treats `Invisible`, unconditional `NoView`, printer marks, and zero-area widgets as artifacts; `Hidden` alone is not an artifact |
+| 7.18.1 | 8.9.2.3–8.9.2.4 | Annotation descriptions satisfy subtype rules | GV | UA-1 checks visible non-link/non-widget annotations; UA-2 enforces mandatory `Contents`/`RC` only where the subtype requires it and reports missing link `Contents` as advice |
+| 7.18.2 | 8.9.2.4.15 | `TrapNet` forbidden | V | UA-2 also rejects deprecated `Sound` and `Movie` annotations |
+| 7.18.3 | 8.9.3.3 | Page annotation tab order is permitted | V | UA-1 requires `Tabs /S`; UA-2 permits `/A`, `/W`, or `/S` on every page containing an annotation |
+| 7.18.4 | 8.10 | Every widget is owned by exactly one `Form` element | V | checks the widget's own `OBJR` owner, not merely the presence of some `Form` in the tree |
+| 7.18.5 | 8.9.2.4.2 | Links have a description | GV | violation in UA-1; advice in UA-2 |
 | 7.18.5 | 8.9.2.4 | `IsMap` is not true | V | |
+| n/a | 8.9.2.4.10 | File attachment dictionary has `AFRelationship` | V | the string file-specification form is implicitly `Unspecified` |
 | 7.18.6 | 8.9 | Media clip has `CT` and `Alt` | — | the library does not create media |
-| 7.18.8 | 8.3 | `PrinterMark` treated as artifact | — | the library does not create them |
+| 7.18.8 | 8.9.2.4.14 | `PrinterMark` treated as artifact | V | accepted as incidental/artifact content rather than requiring a real-content annotation owner in both profiles |
 | 7.19 | 8.13 | Scripts declare changes accessibly | H | |
 | 7.20 | 8.2.2 | Form reference objects forbidden | V | `Ref` key in stream |
 | 7.21 | 8.4 | Fonts embedded and displayed in Unicode | — | covered by PDF/A font checks |

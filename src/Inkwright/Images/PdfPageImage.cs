@@ -35,6 +35,15 @@ public readonly record struct PdfPageImage(string Name, PdfStream Stream, PdfDic
     public override string ToString() => $"{Name}: {Width} by {Height}{(Codec is null ? string.Empty : $" ({Codec})")}";
 }
 
+/// <summary>An invocation of an image on a page, with its visible top-left page-space bounds.</summary>
+/// <param name="Image">The image resource being painted.</param>
+/// <param name="Bounds">Its axis-aligned bounds in points from the page's top-left corner.</param>
+/// <param name="MarkedContentId">The enclosing structure-content id, when present.</param>
+public readonly record struct PdfPlacedImage(
+    PdfPageImage Image,
+    PdfRectangle Bounds,
+    int? MarkedContentId);
+
 /// <summary>Finds the images a page draws, following the forms it draws them through.</summary>
 internal static class PageImageFinder
 {

@@ -28,6 +28,19 @@ foreach (PdfPageImage found in page.Images)
 
 `page.Images` finds images that the page draws inside forms as well, and finds each one only once no matter how many times the content stream draws it.
 
+When placement matters, use `page.PlacedImages`. It returns every paint occurrence rather than one
+entry per resource, including occurrences reached through Form XObjects. `Bounds` are expressed in
+the visible, rotation-normalised page coordinate system with `(0, 0)` at the top left, which makes
+them suitable for fixed-layout conversion:
+
+```csharp
+foreach (PdfPlacedImage placed in page.PlacedImages)
+{
+    PdfImageData pixels = placed.Image.Decode();
+    Console.WriteLine($"{placed.Bounds}: {pixels.Width}×{pixels.Height}");
+}
+```
+
 ## What happens during decoding
 
 1. **Unpacking**: filters are removed by the usual pipeline; it stops at the image codec, and the appropriate decoder takes over.

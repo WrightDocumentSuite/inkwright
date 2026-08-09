@@ -1,6 +1,12 @@
 // Regenerates src/Inkwright/Fonts/LatinGlyphData.cs and Standard14Data.cs.
 //
+// From the repository root:
+//
 //   dotnet run tools/gen-fontdata.cs -- <path to PDF32000_2008.md> <path to a directory of .afm files>
+//
+// The two inputs may instead be supplied through INKWRIGHT_PDF_SPEC and
+// INKWRIGHT_AFM_DIRECTORY. The optional third argument is the output directory and defaults to
+// the repository-relative src/Inkwright/Fonts.
 //
 // The encoding table comes from Annex D.2 of the specification and the metrics from the Adobe core
 // font metrics, so the two generated files are derived from published data rather than transcribed
@@ -9,9 +15,15 @@
 using System.Globalization;
 using System.Text;
 
-string specPath = args.Length > 0 ? args[0] : @"E:\PDFLib\DOCS\PDF32000_2008.md";
-string afmDirectory = args.Length > 1 ? args[1] : @"E:\PDFLib\itext-dotnet-9.7.0\itext\itext.io\resources\afm";
-string outputDirectory = args.Length > 2 ? args[2] : @"E:\PDFLib\Inkwright\src\Inkwright\Fonts";
+string specPath = RequiredInput(args, 0, "INKWRIGHT_PDF_SPEC", "the ISO 32000 Markdown source");
+string afmDirectory = RequiredInput(args, 1, "INKWRIGHT_AFM_DIRECTORY", "the Adobe AFM directory");
+string outputDirectory = Path.GetFullPath(
+    args.Length > 2 ? args[2] : Path.Combine("src", "Inkwright", "Fonts"));
+
+if (!File.Exists(specPath))
+    throw new FileNotFoundException($"The ISO 32000 source was not found at '{specPath}'.", specPath);
+if (!Directory.Exists(afmDirectory))
+    throw new DirectoryNotFoundException($"The Adobe AFM directory was not found at '{afmDirectory}'.");
 
 Dictionary<string, int> specialUnicode = new(StringComparer.Ordinal)
 {
@@ -19,6 +31,22 @@ Dictionary<string, int> specialUnicode = new(StringComparer.Ordinal)
 };
 
 Directory.CreateDirectory(outputDirectory);
+
+static string RequiredInput(string[] arguments, int index, string environmentVariable, string description)
+{
+    string? value = arguments.Length > index ? arguments[index] : null;
+    if (string.IsNullOrWhiteSpace(value))
+        value = Environment.GetEnvironmentVariable(environmentVariable);
+
+    if (string.IsNullOrWhiteSpace(value))
+    {
+        throw new ArgumentException(
+            $"Supply {description} as argument {index + 1} or set {environmentVariable}. " +
+            "Run this tool from the Inkwright repository root.");
+    }
+
+    return Path.GetFullPath(value);
+}
 
 // ---- Annex D.2: the Latin character set and its four encodings -------------------------------
 string[] lines = File.ReadAllLines(specPath);

@@ -26,6 +26,12 @@ PdfFont font = document.Fonts.Embed(@"C:\Windows\Fonts\segoeui.ttf");
 PdfFont? system = document.Fonts.EmbedSystem("Segoe UI", bold: true);
 ```
 
+`SystemFonts` indexes the family and PostScript names stored inside each TrueType/OpenType file,
+not only its filename. This matters for Windows Office fonts whose files are named `times.ttf`,
+`timesbd.ttf`, and so on. Subset prefixes and common PDF/Office aliases such as
+`ABCDEF+TimesNewRomanPS-BoldMT`, `Times-Roman`, and `Times New Roman CYR` resolve to the same
+installed family while preserving bold and italic face selection.
+
 An embedded font is written as a composite (`Type0` with `Identity-H` encoding): text is encoded by
 glyph index, so any script the font covers works, and the `ToUnicode` map keeps the result searchable
 and copyable.
@@ -82,13 +88,19 @@ foreach (PdfLetter letter in page.ExtractLetters())
 }
 ```
 
-`PdfLetter` carries text, baseline origin, width, height, point size, font name, and baseline angle.
+`PdfLetter` carries text, baseline origin, width, height, point size, PDF base-font/PostScript name,
+and baseline angle. The exposed name is the actual font name from the resource dictionary rather
+than the page-local resource key (`F1`, `TT0`, and similar), so downstream conversion can identify
+the family and face.
 Working with letters rather than a flat string is worth it when you need columns, tables, or reading
 order: you can always assemble a string from them, not the other way around.
 
 Simple and composite fonts, `ToUnicode`, embedded CMaps, `Differences`, `cmap` formats 0, 4, 6, and
 12, invisible text under scans (mode 3 is skipped), and Form XObject content nested up to twelve levels
-are all understood.
+are all understood. Extraction starts with the page `CropBox` and follows the graphics-state clipping
+path, including `W`, `W*`, save/restore, text clipping modes, and a Form XObject's `BBox`. A glyph is
+kept when its positioned glyph box intersects the visible region; clipping against the exact font
+outline is intentionally not attempted.
 
 `TextExtractor.Compose` groups letters into lines by baseline and inserts a space where the gap is
 wider than roughly one-fifth of the point size.
@@ -101,6 +113,7 @@ string text = page.ExtractText(new TextExtractionOptions
     ResolveBidirectional = true,   // Arabic and Hebrew in logical order
     SkipHiddenLayers = true,       // skip disabled layers
     UseLogicalOrder = true,        // reading order from structure tree
+    InferReadingOrder = false,     // opt-in geometry order for untagged pages
     UseActualText = true,          // exact replacement from marked-content /ActualText
 });
 ```
@@ -124,6 +137,11 @@ foreach (PdfStructureNode node in document.Structure)
 Each letter carries `MarkedContentId` — the marked-content sequence number in which it was drawn.
 That links the glyph to the structure tree. Glyphs the tree says nothing about are not dropped: they
 follow everything else in draw order, because untagged text is simply untagged text, not decoration.
+
+For an untagged page, `InferReadingOrder = true` reconstructs physical rows, looks for a stable vertical
+gutter, and reads each detected column from top to bottom. Full-width headings split the page into
+independent column bands. The default remains `false`: geometry is useful evidence, but is not an
+authoritative logical order. `UseLogicalOrder` takes priority if both options are enabled.
 
 **ActualText.** With `UseActualText` (default `false` for the general text API), glyphs inside `BDC`
 with `/ActualText` are replaced by one exact string. Spaces and line breaks are not normalized; a

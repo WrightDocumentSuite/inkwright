@@ -22,8 +22,8 @@ that only the people who need them pay for.
   subsetting and `Identity-H`, letter extraction with coordinates. Checked against PdfPig on real
   files: mean similarity ≥ 0.90.
 - **PDF → Markdown**: Tagged PDF becomes CommonMark/GFM headings, paragraphs, lists, links and
-  tables; raster `Figure` elements come out as deduplicated PNG sidecars. The untagged fallback and
-  every loss of semantics land in the diagnostics rather than passing quietly.
+  tables; raster `Figure` elements come out as deduplicated PNG sidecars. Untagged layout inference
+  for columns, headings, lists, and tables is opt-in; every loss of semantics lands in diagnostics.
 - **Images**: JPEG is embedded as it stands, PNG without a single re-encode — its deflate stream is
   already what PDF wants — and alpha becomes a soft mask.
 - **Comments**: notes, highlight/underline/strikeout over words found by search, `FreeText` and

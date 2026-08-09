@@ -60,6 +60,12 @@ internal static class MarkdownExporter
             failedImages = renderer.FailedImageResources;
             skippedPages = renderer.SkippedPages;
         }
+        else if (!tagged && options.StructureMode == MarkdownStructureMode.InferLayout)
+        {
+            var renderer = new InferredMarkdownRenderer(document, options, diagnostics);
+            text = renderer.Render();
+            skippedPages = renderer.SkippedPages;
+        }
         else
         {
             text = RenderPlainText(document, useLogicalOrder: false, options, diagnostics, out skippedPages);

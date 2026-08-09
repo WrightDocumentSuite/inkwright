@@ -58,6 +58,13 @@ test passed and the formerly intermittent signing scenario passed 10 of 10 indep
 
 ## Reference Corpus
 
+The reference PDFs are intentionally not part of a public clone. `Inkwright.Forms.Tests` first
+uses the directory named by `INKWRIGHT_CORPUS`; when the variable is absent, it walks upward from
+the test output looking for a shared directory that contains unpacked `PdfPig-*` or
+`itext-dotnet-*` trees. Point the variable at that shared parent directory when the corpus lives
+elsewhere. If neither source exists, the real-form oracle reports an actionable xUnit skip instead
+of failing an otherwise clean public checkout.
+
 The corpus inventory is 7,807 PDF files totalling 918,216,253 bytes. The full read/rewrite check at
 the baseline produced:
 

@@ -1,7 +1,9 @@
+using Inkwright.Annotations;
 using Inkwright.Content;
 using Inkwright.Cos;
 using Inkwright.Layout;
 using Inkwright.Metadata;
+using Inkwright.Tagging;
 using System.Text;
 using Xunit;
 
@@ -190,6 +192,177 @@ public class PdfUaTests
     }
 
     [Fact]
+    public void RequiresAVisibleAnnotationToBeAnObjectReferenceInTheStructureTree()
+    {
+        using PdfDocument document = DocumentWithStructuredAnnotation(includeObjectReference: false);
+
+        IReadOnlyList<PdfUaProblem> problems = PdfUaProfile.Validate(document, PdfUaConformance.Ua1);
+
+        Assert.Contains(problems, problem =>
+            problem.Clause == "7.18.1" && problem.Message.Contains("OBJR", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void AcceptsAVisibleAnnotationWithMatchingObjectAndParentTreeReferences()
+    {
+        using PdfDocument document = DocumentWithStructuredAnnotation(includeObjectReference: true);
+
+        IReadOnlyList<PdfUaProblem> problems = PdfUaProfile.Validate(document, PdfUaConformance.Ua1);
+
+        Assert.DoesNotContain(problems, problem => problem.Clause == "7.18.1");
+        Assert.DoesNotContain(problems, problem => problem.Clause == "7.18.3");
+    }
+
+    [Fact]
+    public void AnnotationStructureAuthoringPassesUaOneAfterRoundTrip()
+    {
+        using PdfDocument document = Blank();
+        PdfTextAnnotation note = document.Pages[0].Annotations.AddNote(
+            new PdfPoint(72, 700), "A review note with an accessible description.");
+
+        var builder = new StructureTreeBuilder(document);
+        builder.AddRoot("Document").Add("Annot").AddAnnotation(note);
+        builder.Build();
+
+        using PdfDocument reloaded = PdfDocument.Load(document.ToArray());
+        IReadOnlyList<PdfUaProblem> problems = PdfUaProfile.Validate(reloaded, PdfUaConformance.Ua1);
+
+        Assert.DoesNotContain(problems, problem => problem.Clause == "7.18.1");
+        Assert.DoesNotContain(problems, problem => problem.Clause == "7.18.3");
+    }
+
+    [Fact]
+    public void RequiresTheAnnotationParentTreeEntryToPointBackToTheObjrOwner()
+    {
+        using PdfDocument document = DocumentWithStructuredAnnotation(includeObjectReference: true);
+        PdfPage page = document.Pages[0];
+        PdfArray annotations = document.Resolve(page.Dictionary.Get(PdfName.Get("Annots"))).AsArray!;
+        PdfDictionary annotation = document.Resolve(annotations[0]).AsDictionary!;
+        annotation.Set(PdfNames.StructParent, PdfValue.Integer(7));
+
+        IReadOnlyList<PdfUaProblem> problems = PdfUaProfile.Validate(document, PdfUaConformance.Ua1);
+
+        Assert.Contains(problems, problem =>
+            problem.Clause == "7.18.1" && problem.Message.Contains("ParentTree", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData("A")]
+    [InlineData("W")]
+    [InlineData("S")]
+    public void UaTwoAcceptsEveryPermittedAnnotationTabOrder(string order)
+    {
+        using PdfDocument document = DocumentWithStructuredAnnotation(includeObjectReference: true);
+        document.Pages[0].Dictionary.Set(PdfName.Get("Tabs"), PdfValue.Name(PdfName.Get(order)));
+
+        IReadOnlyList<PdfUaProblem> problems = PdfUaProfile.Validate(document, PdfUaConformance.Ua2);
+
+        Assert.DoesNotContain(problems, problem =>
+            problem.Clause == "8.9.3.3" && problem.Message.Contains("Tabs", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void UaTwoDoesNotTreatTheWorkflowHiddenFlagAsAnArtifact()
+    {
+        using PdfDocument document = DocumentWithStructuredAnnotation(includeObjectReference: false);
+        PdfDictionary annotation = OnlyAnnotation(document);
+        annotation.Set(PdfName.Get("F"), PdfValue.Integer((long)PdfAnnotationFlags.Hidden));
+
+        IReadOnlyList<PdfUaProblem> problems = PdfUaProfile.Validate(document, PdfUaConformance.Ua2);
+
+        Assert.Contains(problems, problem =>
+            problem.Clause == "8.9.2" && problem.Message.Contains("OBJR", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void UaTwoRequiresAnInvisibleAnnotationToBeAnArtifactWhenItIsStructured()
+    {
+        using PdfDocument document = DocumentWithStructuredAnnotation(includeObjectReference: true);
+        PdfDictionary annotation = OnlyAnnotation(document);
+        annotation.Set(PdfName.Get("F"), PdfValue.Integer((long)PdfAnnotationFlags.Invisible));
+
+        IReadOnlyList<PdfUaProblem> problems = PdfUaProfile.Validate(document, PdfUaConformance.Ua2);
+
+        Assert.Contains(problems, problem =>
+            problem.Clause == "8.9.2.2" && problem.Message.Contains("artifact", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void UaTwoRejectsAPopupThatAppearsInTheStructureTree()
+    {
+        using PdfDocument document = DocumentWithStructuredAnnotation(
+            includeObjectReference: true, subtype: "Popup");
+
+        IReadOnlyList<PdfUaProblem> problems = PdfUaProfile.Validate(document, PdfUaConformance.Ua2);
+
+        Assert.Contains(problems, problem => problem.Clause == "8.9.2.4.9");
+    }
+
+    [Fact]
+    public void MarkupAnnotationMustBeOwnedByAnAnnotElement()
+    {
+        using PdfDocument document = DocumentWithStructuredAnnotation(
+            includeObjectReference: true, ownerTag: "P");
+
+        IReadOnlyList<PdfUaProblem> problems = PdfUaProfile.Validate(document, PdfUaConformance.Ua1);
+
+        Assert.Contains(problems, problem =>
+            problem.Clause == "7.18.1" && problem.Message.Contains("Annot structure", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void AnnotationObjectCanOccurOnlyOnceInTheStructureTree()
+    {
+        using PdfDocument document = DocumentWithStructuredAnnotation(includeObjectReference: true);
+        PdfDictionary element = Assert.Single(document.Structure).Dictionary;
+        PdfValue objectReference = element.Get(PdfNames.K);
+        element.Set(PdfNames.K, PdfValue.Array(new PdfArray(objectReference, objectReference)));
+
+        IReadOnlyList<PdfUaProblem> problems = PdfUaProfile.Validate(document, PdfUaConformance.Ua1);
+
+        Assert.Contains(problems, problem =>
+            problem.Clause == "7.18.1" && problem.Message.Contains("exactly one OBJR", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void ValidatorFindsAnAnnotationObjrLeftBehindAfterAnnotsRemoval()
+    {
+        using PdfDocument document = DocumentWithStructuredAnnotation(includeObjectReference: true);
+        document.Pages[0].Dictionary.Remove(PdfName.Get("Annots"));
+
+        IReadOnlyList<PdfUaProblem> problems = PdfUaProfile.Validate(document, PdfUaConformance.Ua1);
+
+        Assert.Contains(problems, problem =>
+            problem.Clause == "7.18.1" && problem.Message.Contains("absent from every page", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData("Image")]
+    [InlineData("Form")]
+    public void ReverseAnnotationSweepDoesNotMisclassifyStructuredXObjects(string subtype)
+    {
+        using PdfDocument document = DocumentWithStructuredAnnotation(includeObjectReference: true);
+        PdfStructureNode element = Assert.Single(document.Structure);
+        PdfDictionary objectReference = Assert.IsType<PdfDictionary>(element.Dictionary.Get(PdfNames.K).AsDictionary);
+
+        var xObjectDictionary = new PdfDictionary(4);
+        xObjectDictionary.Set(PdfNames.Type, PdfValue.Name(PdfName.Get("XObject")));
+        xObjectDictionary.Set(PdfNames.Subtype, PdfValue.Name(PdfName.Get(subtype)));
+        xObjectDictionary.Set(PdfNames.StructParent, PdfValue.Integer(0));
+        PdfObjectId xObjectId = document.AddObject(
+            PdfValue.Stream(new PdfStream(xObjectDictionary, Array.Empty<byte>())));
+
+        objectReference.Set(PdfName.Get("Obj"), PdfValue.Reference(xObjectId));
+        document.Pages[0].Dictionary.Remove(PdfName.Get("Annots"));
+        document.InvalidateStructure();
+
+        IReadOnlyList<PdfUaProblem> problems = PdfUaProfile.Validate(document, PdfUaConformance.Ua1);
+
+        Assert.DoesNotContain(problems, problem =>
+            problem.Message.Contains("absent from every page", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void RefusesATrappingNetworkAnnotation()
     {
         using PdfDocument document = Blank();
@@ -206,7 +379,7 @@ public class PdfUaTests
     }
 
     [Fact]
-    public void LeavesHiddenAndPopupAnnotationsAlone()
+    public void LeavesHiddenPopupAndOutOfViewAnnotationsAlone()
     {
         using PdfDocument document = Blank();
         PdfPage page = document.Pages[0];
@@ -218,13 +391,37 @@ public class PdfUaTests
         var popup = new PdfDictionary(2);
         popup.Set(PdfNames.Subtype, PdfValue.Name(PdfName.Get("Popup")));
 
+        var outOfView = new PdfDictionary(2);
+        outOfView.Set(PdfNames.Subtype, PdfValue.Name(PdfName.Get("Text")));
+        outOfView.Set(PdfName.Get("Rect"), PdfValue.Array(PdfArray.OfNumbers(1000, 1000, 1024, 1024)));
+
         page.Dictionary.Set(
             PdfName.Get("Annots"),
-            PdfValue.Array(new PdfArray(PdfValue.Dictionary(hidden), PdfValue.Dictionary(popup))));
+            PdfValue.Array(new PdfArray(
+                PdfValue.Dictionary(hidden),
+                PdfValue.Dictionary(popup),
+                PdfValue.Dictionary(outOfView))));
 
         IReadOnlyList<PdfUaProblem> problems = PdfUaProfile.Validate(document, PdfUaConformance.Ua1);
 
         Assert.DoesNotContain(problems, p => p.Clause.StartsWith("7.18", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void UaOneTreatsPrinterMarkAnnotationsAsIncidentalArtifacts()
+    {
+        using PdfDocument document = Blank();
+        var printerMark = new PdfDictionary(3);
+        printerMark.Set(PdfNames.Type, PdfValue.Name(PdfName.Get("Annot")));
+        printerMark.Set(PdfNames.Subtype, PdfValue.Name(PdfName.Get("PrinterMark")));
+        printerMark.Set(PdfName.Get("Rect"), PdfValue.Array(PdfArray.OfNumbers(0, 0, 24, 24)));
+        document.Pages[0].Dictionary.Set(
+            PdfName.Get("Annots"),
+            PdfValue.Array(new PdfArray(PdfValue.Dictionary(printerMark))));
+
+        IReadOnlyList<PdfUaProblem> problems = PdfUaProfile.Validate(document, PdfUaConformance.Ua1);
+
+        Assert.DoesNotContain(problems, problem => problem.Clause.StartsWith("7.18", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -454,10 +651,73 @@ public class PdfUaTests
         page.Dictionary.Set(PdfName.Get("Annots"), PdfValue.Array(annotations));
     }
 
+    private static PdfDictionary OnlyAnnotation(PdfDocument document)
+    {
+        PdfArray annotations = document.Resolve(
+            document.Pages[0].Dictionary.Get(PdfName.Get("Annots"))).AsArray!;
+        return document.Resolve(Assert.Single(annotations)).AsDictionary!;
+    }
+
     private static PdfDocument Blank()
     {
         PdfDocument document = PdfDocument.Create();
         document.Pages.Add(PageSize.A4);
+        return document;
+    }
+
+    private static PdfDocument DocumentWithStructuredAnnotation(
+        bool includeObjectReference,
+        string subtype = "Text",
+        string ownerTag = "Annot")
+    {
+        PdfDocument document = Blank();
+        PdfPage page = document.Pages[0];
+        page.Dictionary.Set(PdfName.Get("Tabs"), PdfValue.Name(PdfName.Get("S")));
+
+        var annotation = new PdfDictionary(6);
+        annotation.Set(PdfNames.Type, PdfValue.Name(PdfName.Get("Annot")));
+        annotation.Set(PdfNames.Subtype, PdfValue.Name(PdfName.Get(subtype)));
+        annotation.Set(PdfNames.Contents, PdfValue.TextString("A review note"));
+        annotation.Set(PdfName.Get("Rect"), PdfValue.Array(PdfArray.OfNumbers(72, 700, 96, 724)));
+        annotation.Set(PdfNames.StructParent, PdfValue.Integer(0));
+        PdfObjectId annotationId = document.AddObject(PdfValue.Dictionary(annotation));
+        page.Dictionary.Set(
+            PdfName.Get("Annots"),
+            PdfValue.Array(new PdfArray(PdfValue.Reference(annotationId))));
+
+        var root = new PdfDictionary(5);
+        root.Set(PdfNames.Type, PdfValue.Name(PdfName.Get("StructTreeRoot")));
+        PdfObjectId rootId = document.AddObject(PdfValue.Dictionary(root));
+
+        var element = new PdfDictionary(5);
+        element.Set(PdfNames.Type, PdfValue.Name(PdfName.Get("StructElem")));
+        element.Set(PdfName.Get("S"), PdfValue.Name(PdfName.Get(ownerTag)));
+        element.Set(PdfName.Get("P"), PdfValue.Reference(rootId));
+        element.Set(PdfNames.Pg, PdfValue.Reference(page.Id));
+
+        if (includeObjectReference)
+        {
+            var objectReference = new PdfDictionary(3);
+            objectReference.Set(PdfNames.Type, PdfValue.Name(PdfName.Get("OBJR")));
+            objectReference.Set(PdfNames.Pg, PdfValue.Reference(page.Id));
+            objectReference.Set(PdfName.Get("Obj"), PdfValue.Reference(annotationId));
+            element.Set(PdfNames.K, PdfValue.Dictionary(objectReference));
+        }
+
+        PdfObjectId elementId = document.AddObject(PdfValue.Dictionary(element));
+        root.Set(PdfNames.K, PdfValue.Reference(elementId));
+
+        var parentNumbers = new PdfArray(PdfValue.Integer(0), PdfValue.Reference(elementId));
+        var parentTree = new PdfDictionary(1);
+        parentTree.Set(PdfNames.Nums, PdfValue.Array(parentNumbers));
+        root.Set(PdfNames.ParentTree, PdfValue.Reference(document.AddObject(PdfValue.Dictionary(parentTree))));
+        root.Set(PdfNames.ParentTreeNextKey, PdfValue.Integer(1));
+        document.Catalog.Set(PdfNames.StructTreeRoot, PdfValue.Reference(rootId));
+
+        var markInfo = new PdfDictionary(1);
+        markInfo.Set(PdfName.Get("Marked"), PdfValue.Boolean(true));
+        document.Catalog.Set(PdfName.Get("MarkInfo"), PdfValue.Dictionary(markInfo));
+
         return document;
     }
 

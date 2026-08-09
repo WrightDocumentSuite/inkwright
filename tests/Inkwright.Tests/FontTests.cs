@@ -8,6 +8,63 @@ namespace Inkwright.Tests;
 
 public class FontTests
 {
+    [Theory]
+    [InlineData("Times-Roman", "timesnewroman")]
+    [InlineData("Times New Roman CYR", "timesnewroman")]
+    [InlineData("Times New Roman CYR,Bold", "timesnewroman")]
+    [InlineData("ABCDEF+ArialMT", "arialmt")]
+    public void NormalisesPdfAndLegacyOfficeFamilyNames(string name, string expected)
+    {
+        Assert.Equal(expected, SystemFonts.FamilyKeys(name).Last());
+    }
+
+    [Fact]
+    public void IndexesAFontByItsInternalNamesRatherThanOnlyItsFileName()
+    {
+        string? source = SystemFonts.Find("Arial") ?? SystemFonts.Find("DejaVu Sans") ??
+                         SystemFonts.Find("Liberation Sans");
+        Assert.SkipWhen(source is null, "No regular TrueType font was found on this machine.");
+
+        var program = TrueTypeFont.Load(source!);
+        Assert.SkipWhen(program.Weight >= 600 || Math.Abs(program.ItalicAngle) > 0.01,
+            "The available fallback is not a regular face.");
+
+        string directory = Path.Combine(Path.GetTempPath(), "inkwright-font-index-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        string renamed = Path.Combine(directory, "opaque-file-name.ttf");
+
+        try
+        {
+            File.Copy(source!, renamed);
+            IReadOnlyDictionary<string, string> index = SystemFonts.BuildIndex([renamed]);
+
+            string familyKey = SystemFonts.FamilyKeys(program.FamilyName).First();
+            string postScriptKey = SystemFonts.FamilyKeys(program.PostScriptName).First();
+            Assert.Equal(renamed, index[familyKey]);
+            Assert.Equal(renamed, index[postScriptKey]);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void ResolvesWindowsTimesNewRomanFilesAndLegacyAliases()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "This regression covers Windows font file aliases.");
+
+        string fonts = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "Fonts");
+        string regular = Path.Combine(fonts, "times.ttf");
+        string bold = Path.Combine(fonts, "timesbd.ttf");
+        Assert.SkipWhen(!File.Exists(regular) || !File.Exists(bold), "Times New Roman is not installed.");
+
+        Assert.Equal(regular, SystemFonts.Find("Times New Roman"));
+        Assert.Equal(bold, SystemFonts.Find("Times New Roman", bold: true));
+        Assert.Equal(regular, SystemFonts.Find("Times-Roman"));
+        Assert.Equal(regular, SystemFonts.Find("Times New Roman CYR"));
+    }
+
     [Fact]
     public void KnowsTheStandardFourteen()
     {

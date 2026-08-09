@@ -77,17 +77,22 @@ it makes a declaration. You still need to validate.
 
 | Clause | Requirement | How It Is Checked |
 | --- | --- | --- |
-| 7.18.1 / 8.9.2 | Visible annotations have a description | `Contents` on everything except links and form fields |
-| 7.18.2 | Trapping network annotations are forbidden | Subtype `TrapNet` |
-| 7.18.3 / 8.9.2.2 | Tab order is defined by structure | `Tabs` equals `S` on pages with annotations |
-| 7.18.4 / 8.10 | Form fields are nested in `Form` elements | Presence of `Form` in the tree when widgets exist |
-| 7.18.5 / 8.9.2.4 | Links have a description; no server-side maps | `Contents`; `IsMap` is not true |
+| 7.18.1 / 8.9.2 | Real-content annotations have one complete structure link | Exactly one `OBJR`, matching page, `StructParent`, exact `ParentTree` owner, semantic owner tag, and no stale annotation target outside page `Annots`; explicit `XObject` targets are not misclassified as annotations |
+| 7.18.1 / 8.9.2.2 | Artifact annotations are not real content | UA-1 exclusions include `PrinterMark`; UA-2 uses `Invisible`, unconditional `NoView`, printer marks, and zero-area widgets, with `Hidden` alone remaining real content |
+| 7.18.1 / 8.9.2.3–8.9.2.4 | Annotation descriptions satisfy subtype rules | UA-1 visible annotation rules; UA-2 mandatory `Contents`/`RC` for the applicable subtype and advisory link descriptions |
+| 7.18.2 / 8.9.2.4.15 | Forbidden annotation types are absent | `TrapNet`; additionally `Sound` and `Movie` in UA-2 |
+| 7.18.3 / 8.9.3.3 | Tab order is permitted | UA-1 requires `Tabs /S`; UA-2 accepts `/A`, `/W`, or `/S` on every annotated page |
+| 7.18.4 / 8.10 | Each widget is nested in exactly one `Form` element | The widget's own `OBJR` owner, not an unrelated `Form` elsewhere in the tree |
+| 7.18.5 / 8.9.2.4 | Links have a description; no server-side maps | Missing `Contents` is a UA-1 violation and UA-2 advice; `IsMap` is not true |
 | 7.15 | Dynamic XFA forms are forbidden | Search for `dynamicRender` with value `required` |
-| 7.11 / 8.14 | Attachments have both file names | `F` and `UF`; `Desc` is advice |
+| 7.11 / 8.14 | Attachments have file names and required metadata | `F` and `UF`; `Desc` is advice in UA-1 and required for UA-2 `EmbeddedFiles`; file-attachment dictionaries include `AFRelationship` |
 | 7.20 / 8.2.2 | Reference XObjects are forbidden | `Ref` key on an XObject stream |
 
-Hidden annotations and pop-up windows are excluded from checking — the standard
-explicitly removes them from the requirements of clause 7.18.
+UA-1 excludes hidden, out-of-view, popup, and incidental `PrinterMark` annotations from real-content
+annotation rules. UA-2 uses
+different rules: `Hidden` alone does not make an annotation an artifact, `Popup` must not
+occur in the structure tree, and every page containing any annotation needs a permitted
+`Tabs` value.
 
 ### Text Strings and Destinations (UA-2 Only)
 

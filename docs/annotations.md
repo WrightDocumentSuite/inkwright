@@ -57,6 +57,87 @@ For a callout, the annotation rectangle must cover both text and arrow, so `Rect
 
 Vertex order in `/QuadPoints` is written the way readers expect (top-left, top-right, bottom-left, bottom-right), not the way ISO 32000-1’s “counter-clockwise” wording reads. On read, order does not matter: the region is computed from the bounds of all four points, so files from both conventions parse the same way.
 
+## Reading order and PDF/UA
+
+A visible annotation in PDF/UA is not accessible merely because it has `Contents`. ISO 14289-1
+§7.18.1 also requires the annotation to occur in the logical reading order as a whole-object content
+item. Add it to an `Annot` (or another semantically appropriate) structure element before building
+the tree:
+
+```csharp
+using Inkwright.Tagging;
+
+PdfTextAnnotation note = page.Annotations.AddNote(
+    new PdfPoint(505, 700), "Check contract rate", "Priya Raman");
+
+var structure = new StructureTreeBuilder(document);
+StructureElement root = structure.AddRoot("Document");
+root.Add("Annot").AddAnnotation(note);
+structure.Build();
+```
+
+`Build` writes all three sides of the relationship together: `StructElem/K -> OBJR/Obj`, the
+annotation's `StructParent`, and the matching entry in `StructTreeRoot/ParentTree`. It also sets
+`Tabs /S` on the annotation's page. Keys are allocated above both the existing number-tree keys and
+`ParentTreeNextKey`, so annotations on several pages cannot collide.
+
+Calls to `StructureElement.AddContent`, `AddAnnotation`, and `Add` define one exact reading-order
+sequence. `Build` writes that sequence to `K` without grouping items by type. For example,
+`AddContent`, then `AddAnnotation`, then `AddContent` produces `[MCID, OBJR, MCID]`; moving the
+`AddAnnotation` call moves the annotation in the logical reading order even though its icon remains
+at the same page coordinate. This is an accessibility invariant, not merely a serialization detail:
+place each annotation at the point where a reader should encounter it.
+
+In accordance with ISO 32000-1 §14.7.4.2, when one structure element spans pages, the first page is
+the element's `Pg` and its content may use compact integer MCIDs. Content on every other page is
+written as an `MCR` dictionary with explicit `Pg` and `MCID`, while annotations remain `OBJR`
+entries in their original position. This preserves both the ordered `K` ledger and the page identity
+that `StructureReader` reports for every content kid.
+
+When layout has already built the tree, insert the annotation at its position under the existing
+content owner rather than creating a second document root:
+
+```csharp
+PdfStructureNode paragraph = document.Structure
+    .SelectMany(root => root.Descendants())
+    .First(node => node.Tag == "P");
+
+var update = new StructureTreeBuilder(document);
+update.AddAnnotation(paragraph, note);
+update.Build();
+```
+
+The selected `P` remains the content owner: the update creates an indirect `Annot` child with a
+back-link in `P`, then puts the `OBJR` under that child. It does not put a markup annotation's
+`OBJR` directly under `P`. Links receive a `Link` child (`Reference` is also accepted as an existing
+owner), widgets receive `Form`, and other annotations receive `Annot`. If the selected element
+already resolves to the required semantic type, it owns the `OBJR` directly and no redundant child
+is introduced.
+
+The two-argument overload appends for compatibility. Existing `K` items are otherwise left in their
+original order, and an exact position or an existing kid can place a late annotation in the middle:
+
+```csharp
+update.AddAnnotation(paragraph, note, index: 2);
+PdfStructureKid anchor = paragraph.Kids[1];
+update.AddAnnotationBefore(paragraph, secondNote, anchor);
+update.AddAnnotationAfter(paragraph, thirdNote, anchor);
+```
+
+Indexes address the serialized `K` sequence from zero through its current count. Anchors must be
+the actual objects obtained from the selected node's `Kids` list. The selected element and the
+annotation must be indirect objects in the same document, and one annotation can have only one
+structure owner. An annotation already carrying `StructParent` or already referenced by an `OBJR`
+is rejected instead of creating an ambiguous second relationship.
+
+`Build` preflights the complete pending update before it writes a structure object or changes `K`.
+This includes duplicate pending MCIDs, conflicts with an existing page parent array, a page
+`StructParents` key that actually belongs to an object, and exhaustion of `ParentTree` keys. A
+preflight failure leaves the document and builder unchanged, so malformed input can be repaired and
+the same builder retried. Producer-stated page keys are reserved before keys are allocated to
+unkeyed pages, and that deterministic plan is reused during mutation; page traversal order therefore
+cannot make two pages acquire the same `StructParents` key.
+
 ## Discussion threads and statuses
 
 ```csharp
@@ -109,7 +190,24 @@ int removed = document.RemoveAllComments();        // across the whole document
 document.Save("clean.pdf", new PdfSaveOptions { RemoveUnusedObjects = true });
 ```
 
-Deletion removes the reference from `/Annots`, but the dictionary itself and its appearance stream remain in the file—that is why a “clean” copy is saved with `RemoveUnusedObjects`. Without pruning, comment text would physically remain in the document even though no reader would show it.
+Deletion removes the reference from `/Annots` and, for a tagged annotation, removes the matching
+`OBJR`, `StructParent`, and `ParentTree` entry as one operation. An empty `Annot` is pruned, as is the
+minimal `Link` or `Form` shell created by existing-tree insertion. An authored `Link` or `Form` that
+carries semantic metadata such as `Alt`, attributes, an ID, or a title is retained even when its last
+annotation is removed; the library does not discard caller-owned meaning. Elements that still own
+another object or marked content are always retained. This applies to the whole discussion thread,
+including state replies, and to file attachment annotations.
+
+For a damaged file that already lost `OBJR` but still has `StructParent` and `ParentTree`, deletion
+also removes the orphaned key when no other live page, annotation, or XObject claims it. An
+ambiguously shared key is left in place rather than breaking the surviving object; validate and
+repair that malformed structure separately.
+
+The annotation dictionary, appearance stream, and attachment stream can still exist as unreachable
+objects until the file is rewritten. That is why a privacy-clean copy is saved with
+`RemoveUnusedObjects = true`: incremental save cannot erase bytes already present in an earlier PDF
+revision. With pruning enabled, no structure reference keeps the removed comment or attachment
+payload alive.
 
 Cascade is mandatory: if you delete a comment and leave the thread, replies hang in the air and the reader shows them as separate notes without a topic. With an attachment annotation, the file goes too: its entry is removed from the `/Names /EmbeddedFiles` tree and from `/AF`; otherwise a “cleaned” document would still carry the attachment.
 
@@ -121,7 +219,15 @@ page.Annotations.Flatten(a => a.Type == PdfAnnotationType.Stamp);
 int burnt = document.FlattenComments();
 ```
 
-Flattening draws the annotation’s appearance stream into page content and removes the annotation itself: marks stay visible everywhere, but they can no longer be opened, moved, or deleted. Placement follows §12.5.5—the form’s BBox transformed by its `/Matrix`, scaled to `Rect`, and only that second step is written to the stream because `Do` applies `/Matrix` itself.
+Flattening draws the annotation’s appearance stream into page content and removes the annotation
+itself: marks stay visible everywhere, but they can no longer be opened, moved, or deleted. Its
+`OBJR`, `StructParent`, and `ParentTree` entry are removed at the same time, so the logical tree does
+not retain a dangling interactive object. The painted appearance is ordinary page content marked
+as `Artifact`; this operation does not invent replacement document semantics for a review mark
+whose conversation has been removed.
+
+Placement follows §12.5.5—the form’s BBox transformed by its `/Matrix`, scaled to `Rect`, and only
+that second step is written to the stream because `Do` applies `/Matrix` itself.
 
 The discussion thread goes with the comment: a stroke remains on the page, the conversation does not. Hidden (`Hidden`, `NoView`) annotations are not drawn and not removed: they are invisible, and there is nothing to flatten.
 

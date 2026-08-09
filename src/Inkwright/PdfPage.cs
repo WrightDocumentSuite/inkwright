@@ -238,6 +238,39 @@ public sealed class PdfPage
     /// </summary>
     public IReadOnlyList<Images.PdfPageImage> Images => Inkwright.Images.PageImageFinder.Find(this);
 
+    /// <summary>
+    /// Every invocation that paints an image, in paint order, including repeated uses of the
+    /// same resource and images reached through Form XObjects. Bounds use the page's visible,
+    /// rotation-normalised top-left coordinate system.
+    /// </summary>
+    public IReadOnlyList<Images.PdfPlacedImage> PlacedImages
+    {
+        get
+        {
+            PdfMatrix visible = TopLeftTransform();
+            PdfRectangle unit = PdfRectangle.FromSize(0, 0, 1, 1);
+            return [.. Inkwright.Images.PageImageOccurrenceFinder.Find(this, skipHiddenLayers: true)
+                .Select(occurrence => new Inkwright.Images.PdfPlacedImage(
+                    occurrence.Image,
+                    unit.Transform(occurrence.Transform).Transform(visible),
+                    occurrence.MarkedContentId))];
+        }
+    }
+
+    /// <summary>
+    /// Straight vector segments painted by page or Form XObject content, in visible top-left
+    /// page coordinates. Curves and fills are intentionally excluded.
+    /// </summary>
+    public IReadOnlyList<Graphics.PdfLineSegment> ExtractLines() => Graphics.PageLineFinder.Find(this);
+
+    /// <summary>
+    /// Reconstructs bordered tables from straight painted rules and assigns visible glyphs to
+    /// their cells. Missing internal rules become row or column spans.
+    /// </summary>
+    /// <param name="options">Coordinate tolerances and safety limits.</param>
+    public IReadOnlyList<Tables.PdfTable> ExtractTables(Tables.TableExtractionOptions? options = null) =>
+        Tables.TableExtractor.Extract(this, options ?? new Tables.TableExtractionOptions());
+
     /// <summary>Finds a phrase on the page and reports the areas it covers.</summary>
     /// <param name="phrase">The text to look for.</param>
     /// <param name="options">How closely to match; the defaults look past accents and ligatures.</param>

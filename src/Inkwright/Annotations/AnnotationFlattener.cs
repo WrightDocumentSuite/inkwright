@@ -34,12 +34,18 @@ internal static class AnnotationFlattener
 
         using (ContentCanvas canvas = ContentCanvas.ForPage(page))
         {
+            // Once the interactive object and its Annot structure element are gone, the surviving
+            // visual mark is page furniture rather than new document content. Marking it explicitly
+            // avoids introducing untagged content into an otherwise tagged PDF/UA document.
+            canvas.BeginMarkedContent(PdfNames.Artifact);
+
             foreach ((PdfAnnotation _, PdfValue form, PdfMatrix placement) in drawable)
             {
                 PdfName name = canvas.Resources.AddXObject(form);
                 canvas.Save().Transform(placement).DrawXObject(name).Restore();
             }
 
+            canvas.EndMarkedContent();
             canvas.Commit();
         }
 

@@ -72,7 +72,7 @@ internal sealed class PdfUaContext
     }
 
     /// <summary>Every annotation on every page, with the page it sits on.</summary>
-    internal IEnumerable<(PdfPage Page, PdfDictionary Annotation)> Annotations()
+    internal IEnumerable<(PdfPage Page, PdfDictionary Annotation, PdfObjectId ObjectId)> Annotations()
     {
         foreach (PdfPage page in Document.Pages)
         {
@@ -81,8 +81,14 @@ internal sealed class PdfUaContext
 
             for (int i = 0; i < annotations.Count; i++)
             {
-                if (Resolve(annotations[i]).AsDictionary is { } annotation)
-                    yield return (page, annotation);
+                PdfValue value = annotations[i];
+                if (Resolve(value).AsDictionary is { } annotation)
+                {
+                    yield return (
+                        page,
+                        annotation,
+                        value.IsReference ? value.AsReference : PdfObjectId.None);
+                }
             }
         }
     }

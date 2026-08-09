@@ -1,6 +1,6 @@
 # ISO 19005-4 (PDF/A-4) Conformance Matrix
 
-Line-by-line verification of the library against ISO 19005-4:2020 — the first PDF/A part written against PDF 2.0. Source: full text in `E:\Docs\ISO_19005-4_2020`, plus approved ISO errata from `E:\Docs\PDF\pdf-issues-main/docs/19005-4-2020`.
+Line-by-line verification of the library against ISO 19005-4:2020 — the first PDF/A part written against PDF 2.0. The review uses a lawfully obtained copy of the standard plus the approved ISO errata; those external normative materials are not redistributed in this repository.
 
 Parts 1–3 live in a separate [matrix](pdfa-matrix.md): they are incompatible with Part 4 in construction — those require a `%PDF-1.n` header; this requires `%PDF-2.n`.
 

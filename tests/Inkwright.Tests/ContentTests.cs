@@ -205,6 +205,12 @@ public class ContentTests
 
         Assert.Equal("DCTDecode", embedded.Dictionary.GetName(PdfName.Get("Filter"))!.Value);
         Assert.True(embedded.RawData.Span.SequenceEqual(jpeg));
+
+        Images.PdfPlacedImage placed = Assert.Single(reloaded.Pages[0].PlacedImages);
+        Assert.Equal(50, placed.Bounds.Left, 3);
+        Assert.Equal(reloaded.Pages[0].Height - 200, placed.Bounds.Bottom, 3);
+        Assert.Equal(200, placed.Bounds.Width, 3);
+        Assert.Equal(150, placed.Bounds.Height, 3);
     }
 
     [Fact]
@@ -223,6 +229,50 @@ public class ContentTests
 
         ReadOnlySpan<byte> decoded = image.Stream.DecodedSpan();
         Assert.Equal(16 * 16 * 3, decoded.Length);
+    }
+
+    [Fact]
+    public void ExtractsStrokedRectangleSegmentsInTopLeftPageCoordinates()
+    {
+        using var document = PdfDocument.Create();
+        PdfPage page = document.Pages.Add();
+        using (ContentCanvas canvas = ContentCanvas.ForPage(page))
+        {
+            canvas.LineWidth(2).Rectangle(50, 60, 100, 80).Stroke();
+            canvas.Commit();
+        }
+
+        using PdfDocument reloaded = PdfDocument.Load(document.ToArray());
+        IReadOnlyList<Graphics.PdfLineSegment> lines = reloaded.Pages[0].ExtractLines();
+
+        Assert.Equal(4, lines.Count);
+        Assert.All(lines, line => Assert.Equal(2, line.Width, 3));
+        Assert.Contains(lines, line =>
+            Math.Abs(line.Start.X - 50) < 0.01 &&
+            Math.Abs(line.Start.Y - (reloaded.Pages[0].Height - 60)) < 0.01 &&
+            Math.Abs(line.End.X - 150) < 0.01);
+    }
+
+    [Fact]
+    public void ExtractsDarkFilledSliversAsRulesButNotPaleOrLargeRectangles()
+    {
+        using var document = PdfDocument.Create();
+        PdfPage page = document.Pages.Add();
+        using (ContentCanvas canvas = ContentCanvas.ForPage(page))
+        {
+            canvas.FillColor(PdfColor.Black).Rectangle(40, 60, 120, 1).Fill();
+            canvas.FillColor(PdfColor.White).Rectangle(40, 80, 120, 1).Fill();
+            canvas.FillColor(PdfColor.Black).Rectangle(40, 100, 120, 20).Fill();
+            canvas.Commit();
+        }
+
+        using PdfDocument reloaded = PdfDocument.Load(document.ToArray());
+        Graphics.PdfLineSegment line = Assert.Single(reloaded.Pages[0].ExtractLines());
+
+        Assert.Equal(1, line.Width, 3);
+        Assert.Equal(40, line.Start.X, 3);
+        Assert.Equal(160, line.End.X, 3);
+        Assert.Equal(page.Height - 60.5, line.Start.Y, 3);
     }
 
     [Fact]

@@ -21,6 +21,12 @@ public enum MarkdownStructureMode : byte
 
     /// <summary>Ignore Tagged PDF structure and export extracted page text.</summary>
     PlainText,
+
+    /// <summary>
+    /// Use Tagged PDF structure when present; for an untagged document, infer columns, headings,
+    /// lists and tables from positioned glyphs.
+    /// </summary>
+    InferLayout,
 }
 
 /// <summary>Controls how a PDF document is projected into Markdown.</summary>

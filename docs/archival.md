@@ -29,7 +29,12 @@ The paragraph tag is configurable: `element.SemanticTag = "H1"`. For custom mark
 are wrapped in `TaggingSession.Artifact`.
 
 The tree can also be built without the layout engine — `Inkwright.Tagging.StructureTreeBuilder` works on top of
-any document.
+any document. `StructureElement.AddAnnotation` represents a new annotation with `OBJR`, `StructParent`, and
+the reverse `ParentTree` entry; `StructureTreeBuilder.AddAnnotation(PdfStructureNode, PdfAnnotation)` appends
+one to a semantic element in a tree already produced by layout. Both paths retain existing parent-tree entries
+and set page tab order to `S`, as required by PDF/UA-1 §7.18. During new-tree authoring, calls to `AddContent`,
+`AddAnnotation`, and `Add` are written to `K` in their exact call order, including mixed MCID, OBJR, and child
+structure-element entries.
 
 ## PDF/A
 

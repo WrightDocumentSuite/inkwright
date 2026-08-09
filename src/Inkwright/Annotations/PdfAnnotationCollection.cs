@@ -1,5 +1,6 @@
 using System.Collections;
 using Inkwright.Cos;
+using Inkwright.Tagging;
 
 namespace Inkwright.Annotations;
 
@@ -597,6 +598,7 @@ public sealed class PdfAnnotationCollection : IReadOnlyList<PdfAnnotation>
                 continue;
 
             array.RemoveAt(i);
+            AnnotationStructureLinks.Unlink(annotation);
             Synced();
             return true;
         }

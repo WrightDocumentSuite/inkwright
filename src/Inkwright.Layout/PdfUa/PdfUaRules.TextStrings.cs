@@ -25,7 +25,7 @@ internal static partial class PdfUaRules
             Check(context, node.Title, $"the title of a {node.Tag} element");
         }
 
-        foreach ((PdfPage _, PdfDictionary annotation) in context.Annotations())
+        foreach ((PdfPage _, PdfDictionary annotation, PdfObjectId _) in context.Annotations())
         {
             Check(context, annotation.GetTextString(PdfNames.Contents), "the description of an annotation");
             Check(context, annotation.GetTextString(PdfName.Get("TU")), "the tooltip of a form field");

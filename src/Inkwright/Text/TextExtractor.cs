@@ -23,14 +23,25 @@ public static class TextExtractor
 
         options ??= TextExtractionOptions.Default;
 
+        List<PdfLetter> letters = ExtractPaintedLetters(page, options);
+        if (options.UseLogicalOrder)
+            return Reorder(page, letters);
+
+        return options.InferReadingOrder
+            ? TextLayoutAnalyzer.Reorder(page.CropBox, letters)
+            : letters;
+    }
+
+    private static List<PdfLetter> ExtractPaintedLetters(PdfPage page, TextExtractionOptions options)
+    {
         var state = new ExtractionState(
             page.Document,
             options.SkipHiddenLayers ? page.Document.OptionalContent : null,
-            options.UseActualText);
+            options.UseActualText,
+            page.CropBox);
 
         state.Run(page.GetContent(), page.Resources, PdfMatrix.Identity, 0);
-
-        return options.UseLogicalOrder ? Reorder(page, state.Letters) : state.Letters;
+        return state.Letters;
     }
 
     /// <summary>
@@ -78,8 +89,19 @@ public static class TextExtractor
     /// <summary>Extracts the text of a page, grouping glyphs into words and lines by position.</summary>
     /// <param name="page">The page to read.</param>
     /// <param name="options">What to do beyond reading the glyphs; the defaults do nothing extra.</param>
-    public static string ExtractText(PdfPage page, TextExtractionOptions? options = null) =>
-        Compose(ExtractLetters(page, options), options);
+    public static string ExtractText(PdfPage page, TextExtractionOptions? options = null)
+    {
+        ArgumentNullException.ThrowIfNull(page);
+        options ??= TextExtractionOptions.Default;
+
+        List<PdfLetter> letters = ExtractPaintedLetters(page, options);
+        if (options.UseLogicalOrder)
+            return Compose(Reorder(page, letters), options);
+
+        return options.InferReadingOrder
+            ? TextLayoutAnalyzer.Compose(page.CropBox, letters, options.ResolveBidirectional)
+            : Compose(letters, options);
+    }
 
     /// <summary>Groups letters into lines and joins them, inserting spaces where the gaps say so.</summary>
     /// <param name="letters">The letters to compose.</param>
@@ -95,6 +117,14 @@ public static class TextExtractor
 
         if (options.UseLogicalOrder)
             return ComposeInOrder(letters, options);
+
+        if (options.InferReadingOrder)
+        {
+            PdfRectangle bounds = letters
+                .Select(letter => letter.Bounds)
+                .Aggregate((left, right) => left.Union(right));
+            return TextLayoutAnalyzer.Compose(bounds, letters, options.ResolveBidirectional);
+        }
 
         // Group by baseline, allowing for the slight drift that superscripts and rounding introduce.
         List<List<PdfLetter>> lines = [];
@@ -214,11 +244,15 @@ public static class TextExtractor
     private sealed class ExtractionState(
         PdfDocument document,
         PdfOptionalContent? layers,
-        bool useActualText)
+        bool useActualText,
+        PdfRectangle visibleBounds)
     {
         private readonly Dictionary<PdfDictionary, LoadedFont> _fonts = [];
         private readonly Stack<GraphicsState> _stack = new();
-        private GraphicsState _state = GraphicsState.Initial;
+        private readonly TextPathBuilder _path = new();
+        private readonly TextPathBuilder _textClipPath = new();
+        private GraphicsState _state = GraphicsState.Initial(visibleBounds);
+        private bool? _pendingClipEvenOdd;
 
         /// <summary>How many marked-content sequences deep the hidden one we are inside started.</summary>
         private int _hiddenDepth;
@@ -265,19 +299,99 @@ public static class TextExtractor
                         _state = _state with { Transform = Matrix(operands) * _state.Transform };
                         break;
 
+                    case PdfOperator.MoveTo when operands.Length >= 2:
+                        _path.MoveTo(_state.Transform.Transform(new PdfPoint(
+                            operands[0].AsNumber,
+                            operands[1].AsNumber)));
+                        break;
+
+                    case PdfOperator.LineTo when operands.Length >= 2:
+                        _path.LineTo(_state.Transform.Transform(new PdfPoint(
+                            operands[0].AsNumber,
+                            operands[1].AsNumber)));
+                        break;
+
+                    case PdfOperator.CurveTo when operands.Length >= 6:
+                        _path.CurveTo(
+                            _state.Transform.Transform(new PdfPoint(operands[0].AsNumber, operands[1].AsNumber)),
+                            _state.Transform.Transform(new PdfPoint(operands[2].AsNumber, operands[3].AsNumber)),
+                            _state.Transform.Transform(new PdfPoint(operands[4].AsNumber, operands[5].AsNumber)));
+                        break;
+
+                    case PdfOperator.CurveToV when operands.Length >= 4:
+                        _path.CurveTo(
+                            _path.CurrentPoint,
+                            _state.Transform.Transform(new PdfPoint(operands[0].AsNumber, operands[1].AsNumber)),
+                            _state.Transform.Transform(new PdfPoint(operands[2].AsNumber, operands[3].AsNumber)));
+                        break;
+
+                    case PdfOperator.CurveToY when operands.Length >= 4:
+                    {
+                        PdfPoint end = _state.Transform.Transform(new PdfPoint(
+                            operands[2].AsNumber,
+                            operands[3].AsNumber));
+                        _path.CurveTo(
+                            _state.Transform.Transform(new PdfPoint(operands[0].AsNumber, operands[1].AsNumber)),
+                            end,
+                            end);
+                        break;
+                    }
+
+                    case PdfOperator.ClosePath:
+                        _path.Close();
+                        break;
+
+                    case PdfOperator.Rectangle when operands.Length >= 4:
+                        _path.Rectangle(
+                            PdfRectangle.FromSize(
+                                operands[0].AsNumber,
+                                operands[1].AsNumber,
+                                operands[2].AsNumber,
+                                operands[3].AsNumber),
+                            _state.Transform);
+                        break;
+
+                    case PdfOperator.Clip:
+                        _pendingClipEvenOdd = false;
+                        break;
+
+                    case PdfOperator.ClipEvenOdd:
+                        _pendingClipEvenOdd = true;
+                        break;
+
+                    case PdfOperator.Stroke:
+                    case PdfOperator.CloseStroke:
+                    case PdfOperator.Fill:
+                    case PdfOperator.FillEvenOdd:
+                    case PdfOperator.FillStroke:
+                    case PdfOperator.FillStrokeEvenOdd:
+                    case PdfOperator.CloseFillStroke:
+                    case PdfOperator.CloseFillStrokeEvenOdd:
+                    case PdfOperator.EndPath:
+                        EndPath();
+                        break;
+
                     case PdfOperator.BeginText:
+                        _textClipPath.Reset();
                         textMatrix = PdfMatrix.Identity;
                         lineMatrix = PdfMatrix.Identity;
                         break;
 
+                    case PdfOperator.EndText:
+                        ApplyTextClip();
+                        break;
+
                     case PdfOperator.SetFont when operands.Length >= 2:
+                    {
+                        LoadedFont? font = ResolveFont(resources, operands[0].AsName);
                         _state = _state with
                         {
-                            Font = ResolveFont(resources, operands[0].AsName),
-                            FontName = operands[0].AsName?.Value ?? string.Empty,
+                            Font = font,
+                            FontName = font?.BaseFont ?? operands[0].AsName?.Value ?? string.Empty,
                             FontSize = operands[1].AsNumber,
                         };
                         break;
+                    }
 
                     case PdfOperator.SetCharSpacing when operands.Length >= 1:
                         _state = _state with { CharSpacing = operands[0].AsNumber };
@@ -508,12 +622,28 @@ public static class TextExtractor
             int savedMarkedDepth = _markedDepth;
             int savedHiddenDepth = _hiddenDepth;
             PdfObjectId savedContentStream = _contentStream;
+            TextPath savedPath = _path.BuildAndReset();
+            TextPath savedTextClipPath = _textClipPath.BuildAndReset();
+            bool? savedPendingClip = _pendingClipEvenOdd;
 
             PdfMatrix matrix = PdfMatrix.FromArray(form.Dictionary.GetArray(PdfNames.Matrix));
             PdfDictionary formResources = form.Dictionary.GetDictionary(PdfNames.Resources) ?? resources;
             _contentStream = rawForm.IsReference ? rawForm.AsReference : PdfObjectId.None;
             try
             {
+                PdfRectangle formBox = PdfRectangle.FromArray(
+                    form.Dictionary.GetArray(PdfName.Get("BBox")));
+                if (!formBox.IsEmpty)
+                {
+                    var boxPath = new TextPathBuilder();
+                    boxPath.Rectangle(formBox, matrix * _state.Transform);
+                    _state = _state with
+                    {
+                        Clip = _state.Clip.Intersect(boxPath.BuildAndReset(), evenOdd: false),
+                    };
+                }
+
+                _pendingClipEvenOdd = null;
                 Run(form.DecodedSpan(), formResources, matrix, depth + 1);
             }
             finally
@@ -529,7 +659,30 @@ public static class TextExtractor
                 _markedDepth = savedMarkedDepth;
                 _hiddenDepth = savedHiddenDepth;
                 _contentStream = savedContentStream;
+                _path.Load(savedPath);
+                _textClipPath.Load(savedTextClipPath);
+                _pendingClipEvenOdd = savedPendingClip;
             }
+        }
+
+        private void EndPath()
+        {
+            TextPath path = _path.BuildAndReset();
+            if (_pendingClipEvenOdd is { } evenOdd)
+                _state = _state with { Clip = _state.Clip.Intersect(path, evenOdd) };
+
+            _pendingClipEvenOdd = null;
+        }
+
+        private void ApplyTextClip()
+        {
+            if (_textClipPath.IsEmpty)
+                return;
+
+            _state = _state with
+            {
+                Clip = _state.Clip.Intersect(_textClipPath.BuildAndReset(), evenOdd: false),
+            };
         }
 
         private LoadedFont? ResolveFont(PdfDictionary resources, PdfName? name)
@@ -578,8 +731,6 @@ public static class TextExtractor
                 return;
 
             ReadOnlySpan<byte> bytes = value.AsStringBytes;
-            bool invisible = _state.RenderMode == 3 || _hiddenDepth > 0;
-
             for (int index = 0; index < bytes.Length;)
             {
                 int length = font.ReadCode(bytes, index, out uint code);
@@ -593,17 +744,27 @@ public static class TextExtractor
                 if (length == 1 && code == 32)
                     spacing += _state.WordSpacing;
 
-                if (!invisible && font.GetText(code) is { Length: > 0 } text)
+                PdfMatrix render = new PdfMatrix(
+                    _state.FontSize * _state.HorizontalScale, 0,
+                    0, _state.FontSize,
+                    0, _state.Rise) * textMatrix * _state.Transform;
+
+                PdfPoint origin = render.Transform(PdfPoint.Origin);
+                PdfPoint advance = render.Transform(new PdfPoint(glyphWidth, 0));
+                PdfPoint up = render.Transform(new PdfPoint(0, 1));
+                bool hidden = _hiddenDepth > 0;
+                bool paints = _state.RenderMode is 0 or 1 or 2 or 4 or 5 or 6;
+                bool clips = _state.RenderMode is 4 or 5 or 6 or 7;
+
+                if (!hidden && clips)
                 {
-                    PdfMatrix render = new PdfMatrix(
-                        _state.FontSize * _state.HorizontalScale, 0,
-                        0, _state.FontSize,
-                        0, _state.Rise) * textMatrix * _state.Transform;
+                    PdfPoint offset = up - origin;
+                    _textClipPath.Polygon(origin, advance, advance + offset, up);
+                }
 
-                    PdfPoint origin = render.Transform(PdfPoint.Origin);
-                    PdfPoint advance = render.Transform(new PdfPoint(glyphWidth, 0));
-                    PdfPoint up = render.Transform(new PdfPoint(0, 1));
-
+                if (!hidden && paints && _state.Clip.Intersects(origin, advance, up) &&
+                    font.GetText(code) is { Length: > 0 } text)
+                {
                     double drawn = origin.DistanceTo(advance);
                     double height = origin.DistanceTo(up);
                     double angle = double.RadiansToDegrees(Math.Atan2(advance.Y - origin.Y, advance.X - origin.X));
@@ -644,9 +805,21 @@ public static class TextExtractor
         double HorizontalScale,
         double Leading,
         double Rise,
-        int RenderMode)
+        int RenderMode,
+        TextClipRegion Clip)
     {
-        internal static GraphicsState Initial =>
-            new(PdfMatrix.Identity, null, string.Empty, 0, 0, 0, 1, 0, 0, 0);
+        internal static GraphicsState Initial(PdfRectangle visibleBounds) =>
+            new(
+                PdfMatrix.Identity,
+                null,
+                string.Empty,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                TextClipRegion.FromRectangle(visibleBounds));
     }
 }

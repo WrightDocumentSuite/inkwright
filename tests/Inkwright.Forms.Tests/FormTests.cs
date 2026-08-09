@@ -113,11 +113,20 @@ public class FormTests
     [Fact]
     public void ReadsFormsFromRealDocuments()
     {
+        string? corpusRoot = FindCorpusRoot(out string unavailableReason);
+        Assert.SkipWhen(corpusRoot is null, unavailableReason);
+
+        string[] formFiles = FindFormFiles(corpusRoot!).ToArray();
+        Assert.SkipWhen(
+            formFiles.Length == 0,
+            $"No PDF form candidates were found under '{corpusRoot}'. Set INKWRIGHT_CORPUS " +
+            "to the shared directory that contains the unpacked PdfPig and iText reference trees.");
+
         int documentsWithForms = 0;
         int fieldsRead = 0;
         var failures = new List<string>();
 
-        foreach (string path in FindFormFiles())
+        foreach (string path in formFiles)
         {
             try
             {
@@ -156,18 +165,79 @@ public class FormTests
         Assert.True(failures.Count == 0, string.Join('\n', failures.Take(20)));
     }
 
-    private static IEnumerable<string> FindFormFiles()
+    private static string? FindCorpusRoot(out string unavailableReason)
     {
-        string root = @"E:\PDFLib";
-        if (!Directory.Exists(root))
-            yield break;
-
-        foreach (string directory in Directory.EnumerateDirectories(root))
+        const string environmentVariable = "INKWRIGHT_CORPUS";
+        string? configured = Environment.GetEnvironmentVariable(environmentVariable);
+        if (!string.IsNullOrWhiteSpace(configured))
         {
-            if (Path.GetFileName(directory) == "Inkwright")
+            string fullPath;
+            try
+            {
+                fullPath = Path.GetFullPath(configured);
+            }
+            catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+            {
+                unavailableReason =
+                    $"{environmentVariable} is not a valid path: {ex.Message}";
+                return null;
+            }
+
+            if (Directory.Exists(fullPath))
+            {
+                unavailableReason = string.Empty;
+                return fullPath;
+            }
+
+            unavailableReason =
+                $"{environmentVariable} points to missing directory '{fullPath}'. Set it to the " +
+                "shared directory that contains the unpacked PdfPig and iText reference trees.";
+            return null;
+        }
+
+        string? directory = AppContext.BaseDirectory;
+        while (directory is not null)
+        {
+            if (ContainsReferenceTree(directory))
+            {
+                unavailableReason = string.Empty;
+                return directory;
+            }
+
+            directory = Path.GetDirectoryName(directory.TrimEnd(Path.DirectorySeparatorChar));
+        }
+
+        unavailableReason =
+            "No PDF form corpus was found. Set INKWRIGHT_CORPUS to the shared directory that " +
+            "contains the unpacked PdfPig and iText reference trees; the corpus is intentionally " +
+            "not included in a public clone.";
+        return null;
+    }
+
+    private static bool ContainsReferenceTree(string directory)
+    {
+        try
+        {
+            return Directory.EnumerateDirectories(directory, "PdfPig-*", SearchOption.TopDirectoryOnly).Any() ||
+                   Directory.EnumerateDirectories(directory, "itext-dotnet-*", SearchOption.TopDirectoryOnly).Any();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
+
+    private static IEnumerable<string> FindFormFiles(string root)
+    {
+        foreach (string directory in Directory.EnumerateDirectories(root).Order(StringComparer.OrdinalIgnoreCase))
+        {
+            string directoryName = Path.GetFileName(directory);
+            if (directoryName is "Inkwright" or "artifacts" or ".git")
                 continue;
 
-            foreach (string file in Directory.EnumerateFiles(directory, "*.pdf", SearchOption.AllDirectories))
+            foreach (string file in Directory
+                         .EnumerateFiles(directory, "*.pdf", SearchOption.AllDirectories)
+                         .Order(StringComparer.OrdinalIgnoreCase))
             {
                 string name = Path.GetFileName(file);
                 if (name.Contains("form", StringComparison.OrdinalIgnoreCase) ||
