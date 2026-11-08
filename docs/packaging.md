@@ -207,3 +207,8 @@ invalidate a locked restore even when the explicit package references are unchan
 To service the SDK, update `global.json`, restore with `--force-evaluate`, review the
 lock-file diff, and repeat the locked restore, source tests, and package consumer gates.
 Commit these changes together; do not disable locked restore in CI.
+
+The test projects deliberately use `xunit.v3.mtp-off` 3.2.2 with the VSTest adapter.
+This retains the existing `dotnet test`, TRX, filters, and coverage commands while
+removing the unused, deprecated Microsoft.Testing.Platform.MSBuild 1.9.1 dependency.
+Do not switch to the MTP v2 package without migrating those commands together.
