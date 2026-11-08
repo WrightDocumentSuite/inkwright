@@ -96,10 +96,10 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Source Link tool installation failed with exit code $LASTEXITCODE." }
 
           $sourceLink = Join-Path $toolDirectory 'sourcelink'
-          foreach ($package in Get-ChildItem artifacts/packages -Filter '*.snupkg') {
-            & $sourceLink test $package.FullName
-            if ($LASTEXITCODE -ne 0) { throw "Source Link validation failed for $($package.Name)." }
-          }
+          ./.github/scripts/Test-SourceLink.ps1 `
+            -PackageDirectory artifacts/packages `
+            -SourceLinkTool $sourceLink `
+            -RepositoryCommit (git rev-parse HEAD).Trim()
 
       - name: Publish and run external Native AOT consumer
         shell: pwsh

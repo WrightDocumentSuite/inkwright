@@ -84,7 +84,7 @@ the Forms analyzer, the CJK licence, and the matching PDB in every symbol packag
 an external Native AOT consumer from an isolated cache, then signs and verifies a PDF through the
 packed Signing assembly. Its working directory must stay outside the repository so central package
 management and other repository build settings cannot make the consumer test pass accidentally.
-Public CI additionally runs `sourcelink test` from the mirrored commit.
+Public CI extracts each shipped portable PDB and runs `sourcelink test` from the mirrored commit.
 
 ## Verify Installation Locally
 
@@ -197,7 +197,7 @@ Packing also produces one `.snupkg` beside every ordinary package. Source Link m
 to the exact public repository commit recorded in the package metadata, so publish each symbol
 package together with its matching `.nupkg`. The release check must inspect the repository URL and
 commit in both the package and PDB before either artifact is pushed. CI additionally requires the
-exact runtime PDB in each symbol package and runs `sourcelink test` over all five `.snupkg` files.
+exact runtime PDB in each symbol package and validates the canonical Source Link mapping and public source checksums in the PDB extracted from each `.snupkg`. The tool does not accept a `.snupkg` path directly (exit 4); use `.github/scripts/Test-SourceLink.ps1`.
 
 ## SDK servicing and lock files
 

@@ -358,4 +358,3 @@ document.Save("redacted.pdf", new PdfSaveOptions { RemoveUnusedObjects = true })
 ```
 
 Applying redaction rewrites the page and Form XObject content streams (`Tj`, `TJ`, `'`, `"`) to remove the intersecting glyph character codes while inserting exact `TJ` kerning adjustments so surviving glyphs on the same line remain at their original coordinates. Intersecting inline images (`BI…ID…EI`), image XObjects (`Do`), and annotations are removed, unreferenced image streams are pruned from `/Resources /XObject`, and the opaque fill box and optional overlay text are painted inside an `/Artifact` marked-content block.
-
