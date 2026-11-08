@@ -13,7 +13,7 @@
 
   <ItemGroup Label="Interop fixtures and benchmarks">
     <PackageVersion Include="BenchmarkDotNet" Version="0.15.8" />
-    <PackageVersion Include="PdfPig" Version="0.1.15" />
+    <PackageVersion Include="PdfPig" Version="0.1.16" />
     <PackageVersion Include="PDFsharp" Version="6.2.4" />
   </ItemGroup>
 
