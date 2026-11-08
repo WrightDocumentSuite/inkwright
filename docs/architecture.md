@@ -1,6 +1,6 @@
 # Inkwright Architecture
 
-Inkwright is a PDF library for .NET 10, designed along the layered model of `System.Text.Json`:
+Inkwright is a PDF library for .NET, designed along the layered model of `System.Text.Json`:
 low-level primitives, streaming I/O on top of them, a document model above that, and add-ons on top
 that only users who need them pay for. Each layer is public and self-contained.
 

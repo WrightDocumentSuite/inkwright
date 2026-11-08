@@ -18,7 +18,7 @@
     <RootNamespace>Inkwright</RootNamespace>
     <IsPackable>true</IsPackable>
     <PackageId>Inkwright</PackageId>
-    <Description>Modern .NET 10 PDF library with zero native dependencies: create, read, edit and incrementally save PDFs; extract text or Markdown; handle fonts, images, annotations, encryption and low-level COS objects.</Description>
+    <Description>Modern .NET PDF library with zero native dependencies: create, read, edit and incrementally save PDFs; extract text or Markdown; handle fonts, images, annotations, encryption and low-level COS objects.</Description>
     <PackageTags>pdf;iso32000;pdf-to-markdown;tagged-pdf;text-extraction;encryption;streaming;aot</PackageTags>
     <IsAotCompatible>true</IsAotCompatible>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>

@@ -1,6 +1,8 @@
 # Inkwright
 
-A modern .NET 10 PDF library (Apache-2.0) with not one native dependency. The architecture is
+[Website](https://wrightsuite.com/) · [Documentation](https://github.com/WrightDocumentSuite/inkwright/tree/main/docs) · [NuGet](https://www.nuget.org/packages/Inkwright)
+
+A modern .NET PDF library (Apache-2.0) with not one native dependency. The architecture is
 layered the way `System.Text.Json` is: COS primitives → streaming I/O → document model → add-ons
 that only the people who need them pay for.
 
