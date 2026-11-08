@@ -17,6 +17,9 @@
   <Folder Name="/benchmarks/">
     <Project Path="benchmarks/Inkwright.Benchmarks/Inkwright.Benchmarks.csproj" />
   </Folder>
+  <Folder Name="/fuzz/">
+    <Project Path="fuzz/Inkwright.Fuzz/Inkwright.Fuzz.csproj" />
+  </Folder>
   <Folder Name="/samples/">
     <Project Path="samples/Inkwright.Samples/Inkwright.Samples.csproj" />
   </Folder>

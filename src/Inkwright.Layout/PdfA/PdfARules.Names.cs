@@ -5,9 +5,9 @@ namespace Inkwright.Layout;
 
 internal static partial class PdfARules
 {
-    private const int _maxStructureNameDepth = 64;
+    private const int MaxStructureNameDepth = 64;
 
-    private static readonly UTF8Encoding _strictNameEncoding = new(
+    private static readonly UTF8Encoding StrictNameEncoding = new(
         encoderShouldEmitUTF8Identifier: false,
         throwOnInvalidBytes: true);
 
@@ -127,7 +127,7 @@ internal static partial class PdfARules
         HashSet<PdfDictionary> seen,
         int depth)
     {
-        if (depth > _maxStructureNameDepth)
+        if (depth > MaxStructureNameDepth)
             return;
 
         PdfValue resolved = context.Resolve(value);
@@ -162,7 +162,7 @@ internal static partial class PdfARules
 
         try
         {
-            _ = _strictNameEncoding.GetCharCount(name.Utf8);
+            _ = StrictNameEncoding.GetCharCount(name.Utf8);
         }
         catch (DecoderFallbackException)
         {

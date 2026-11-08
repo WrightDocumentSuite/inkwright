@@ -1,0 +1,39 @@
+{
+  "version": 2,
+  "dependencies": {
+    "net10.0": {
+      "inkwright": {
+        "type": "Project",
+        "dependencies": {
+          "System.Security.Cryptography.Pkcs": "[10.0.13, )"
+        }
+      },
+      "inkwright.forms": {
+        "type": "Project",
+        "dependencies": {
+          "Inkwright": "[0.1.4, )"
+        }
+      },
+      "inkwright.layout": {
+        "type": "Project",
+        "dependencies": {
+          "Inkwright": "[0.1.4, )"
+        }
+      },
+      "inkwright.signing": {
+        "type": "Project",
+        "dependencies": {
+          "Inkwright": "[0.1.4, )",
+          "Inkwright.Forms": "[0.1.4, )",
+          "System.Security.Cryptography.Pkcs": "[10.0.13, )"
+        }
+      },
+      "System.Security.Cryptography.Pkcs": {
+        "type": "CentralTransitive",
+        "requested": "[10.0.13, )",
+        "resolved": "10.0.13",
+        "contentHash": "a+EovgC1fBnwdlQ6cn3j4JFBfKqiFaFvoAhjisOoSvazLAcIznaBzPQP0oYnvccmeXfqUH1KebVZOxSeH6rMaw=="
+      }
+    }
+  }
+}

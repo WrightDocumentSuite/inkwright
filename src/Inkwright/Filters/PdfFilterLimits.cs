@@ -3,7 +3,9 @@ namespace Inkwright.Filters;
 /// <summary>
 /// Caps how much a single stream may expand while being decoded. A few kilobytes of deflate data
 /// can name a terabyte of output, and a library that reads untrusted files has to say no somewhere;
-/// decoding stops at the limit and hands back what it produced instead of exhausting memory.
+/// standalone compatibility decoding stops at the limit instead of exhausting memory. Document
+/// reads additionally use <see cref="IO.PdfResourceLimits"/> and report an explicit
+/// <see cref="Diagnostics.PdfResourceLimitException"/> rather than caching a truncated prefix.
 /// </summary>
 public static class PdfFilterLimits
 {
@@ -11,17 +13,19 @@ public static class PdfFilterLimits
 
     /// <summary>
     /// The most bytes one stream may decode to. Defaults to 128 MB, which is far above any honest
-    /// content stream or Flate-compressed image and far below what a decompression bomb wants.
+    /// content stream or Flate-compressed image and far below what a decompression bomb wants. It
+    /// remains a process-wide upper ceiling for source compatibility; prefer per-read limits in
+    /// concurrent applications.
     /// </summary>
     public static long MaxDecodedBytes
     {
-        get => _maxDecodedBytes;
+        get => Interlocked.Read(ref _maxDecodedBytes);
         set
         {
             ArgumentOutOfRangeException.ThrowIfNegativeOrZero(value);
-            _maxDecodedBytes = value;
+            Interlocked.Exchange(ref _maxDecodedBytes, value);
         }
     }
 
-    internal static int Cap => (int)Math.Min(_maxDecodedBytes, int.MaxValue - 64);
+    internal static int Cap => (int)Math.Min(MaxDecodedBytes, int.MaxValue - 64);
 }

@@ -358,11 +358,15 @@ public sealed class PdfLinkAnnotation : PdfAnnotation
     {
         get
         {
-            PdfValue destination = Dictionary.Get(AnnotationNames.Dest);
-            if (destination.AsArray is not { Count: > 0 } array)
-                return null;
+            PdfArray? array = Dictionary.Get(AnnotationNames.Dest).AsArray;
+            if (array is null &&
+                Dictionary.GetDictionary(AnnotationNames.A) is { } action &&
+                action.GetName(AnnotationNames.S)?.Value == "GoTo")
+            {
+                array = action.Get(PdfName.Get("D")).AsArray;
+            }
 
-            if (!array.AsSpan()[0].IsReference)
+            if (array is not { Count: > 0 } || !array.AsSpan()[0].IsReference)
                 return null;
 
             PdfObjectId target = array[0].AsReference;

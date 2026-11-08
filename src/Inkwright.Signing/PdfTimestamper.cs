@@ -79,6 +79,49 @@ public static class PdfTimestamper
         }
     }
 
+    /// <summary>
+    /// Adds a document timestamp asynchronously. Authority I/O is non-blocking when the authority
+    /// implements <see cref="ITimestampAuthority.SendAsync"/> asynchronously. The operation stamps
+    /// a private snapshot and does not mutate <paramref name="document"/>.
+    /// </summary>
+    /// <param name="document">The document to timestamp.</param>
+    /// <param name="options">The authority to ask and how to lay the field out.</param>
+    /// <param name="cancellationToken">Stops the authority request.</param>
+    /// <exception cref="InvalidOperationException">
+    /// The document was loaded from a source whose cross-reference data had to be rebuilt, so an
+    /// identity-preserving incremental snapshot cannot be made safely.
+    /// </exception>
+    public static async Task<byte[]> TimestampAsync(
+        PdfDocument document,
+        PdfTimestampOptions options,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(document);
+        ArgumentNullException.ThrowIfNull(options);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        ITimestampAuthority client = CmsBuilder.ResolveAuthority(options.Client, options.Authority);
+
+        if (!PdfSignatureAlgorithms.IsSupported(options.HashAlgorithm))
+            throw new PlatformNotSupportedException($"This machine cannot compute {options.HashAlgorithm.Name} digests.");
+
+        using PdfDocument target = document.CreateIncrementalSnapshot();
+        PrepareField(target, options);
+
+        byte[] file = target.ToIncrementalArray(new PdfSaveOptions
+        {
+            UseObjectStreams = false,
+            UpdateModificationDate = false,
+            SetProducer = false,
+        });
+
+        return await SignatureEmbedder.EmbedAsync(
+            file,
+            (covered, token) => RequestTokenAsync(covered, options, client, token),
+            $"{nameof(PdfTimestampOptions)}.{nameof(PdfTimestampOptions.SignatureSize)}",
+            cancellationToken).ConfigureAwait(false);
+    }
+
     /// <summary>Adds a document timestamp to a complete file, such as one already signed.</summary>
     /// <param name="file">The whole file; its bytes survive untouched at the front of the result.</param>
     /// <param name="options">The authority to ask and how to lay the field out.</param>
@@ -88,6 +131,22 @@ public static class PdfTimestamper
 
         using PdfDocument document = PdfDocument.Load(file);
         return Timestamp(document, options);
+    }
+
+    /// <summary>Adds a document timestamp asynchronously to a complete file.</summary>
+    /// <param name="file">The whole file; its bytes survive untouched at the front of the result.</param>
+    /// <param name="options">The authority to ask and how to lay the field out.</param>
+    /// <param name="cancellationToken">Stops the authority request.</param>
+    public static async Task<byte[]> TimestampAsync(
+        byte[] file,
+        PdfTimestampOptions options,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(file);
+        ArgumentNullException.ThrowIfNull(options);
+
+        using PdfDocument document = PdfDocument.Load(file);
+        return await TimestampAsync(document, options, cancellationToken).ConfigureAwait(false);
     }
 
     private static bool CanAppendTo(PdfDocument document)
@@ -151,10 +210,33 @@ public static class PdfTimestamper
         byte[] digest = CmsBuilder.Hash(covered, options.HashAlgorithm);
 
         Rfc3161TimestampRequest request = Rfc3161TimestampRequest.CreateFromHash(
-            digest, options.HashAlgorithm, requestSignerCertificates: true);
+            digest,
+            options.HashAlgorithm,
+            nonce: CmsBuilder.CreateTimestampNonce(),
+            requestSignerCertificates: true);
 
         byte[] response = client.Send(request.Encode());
-        Rfc3161TimestampToken token = request.ProcessResponse(response, out _);
+        Rfc3161TimestampToken token = CmsBuilder.ValidateTimestampResponse(request, response);
+
+        return token.AsSignedCms().Encode();
+    }
+
+    private static async ValueTask<byte[]> RequestTokenAsync(
+        byte[] covered,
+        PdfTimestampOptions options,
+        ITimestampAuthority client,
+        CancellationToken cancellationToken)
+    {
+        byte[] digest = CmsBuilder.Hash(covered, options.HashAlgorithm);
+
+        Rfc3161TimestampRequest request = Rfc3161TimestampRequest.CreateFromHash(
+            digest,
+            options.HashAlgorithm,
+            nonce: CmsBuilder.CreateTimestampNonce(),
+            requestSignerCertificates: true);
+
+        byte[] response = await client.SendAsync(request.Encode(), cancellationToken).ConfigureAwait(false);
+        Rfc3161TimestampToken token = CmsBuilder.ValidateTimestampResponse(request, response);
 
         return token.AsSignedCms().Encode();
     }

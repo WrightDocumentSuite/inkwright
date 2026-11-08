@@ -48,7 +48,7 @@ public readonly record struct PdfPlacedImage(
 internal static class PageImageFinder
 {
     /// <summary>How deep forms may nest before the search gives up.</summary>
-    private const int _maxDepth = 12;
+    private const int MaxDepth = 12;
 
     internal static List<PdfPageImage> Find(PdfPage page)
     {
@@ -61,7 +61,7 @@ internal static class PageImageFinder
 
     private static void Collect(PdfDictionary resources, List<PdfPageImage> images, HashSet<PdfStream> visited, int depth)
     {
-        if (depth > _maxDepth || resources.GetDictionary(PdfNames.XObject) is not { } objects)
+        if (depth > MaxDepth || resources.GetDictionary(PdfNames.XObject) is not { } objects)
             return;
 
         foreach (KeyValuePair<PdfName, PdfValue> entry in objects)
@@ -94,7 +94,7 @@ internal readonly record struct PdfImageOccurrence(
 /// <summary>Walks page and form content streams in paint order to locate image invocations.</summary>
 internal static class PageImageOccurrenceFinder
 {
-    private const int _maxDepth = 12;
+    private const int MaxDepth = 12;
 
     internal static IReadOnlyList<PdfImageOccurrence> Find(PdfPage page, bool skipHiddenLayers)
     {
@@ -125,7 +125,7 @@ internal static class PageImageOccurrenceFinder
         List<PdfImageOccurrence> occurrences,
         int depth)
     {
-        if (depth > _maxDepth)
+        if (depth > MaxDepth)
             return;
 
         ContentOperations operations = ContentOperations.Parse(content, document);

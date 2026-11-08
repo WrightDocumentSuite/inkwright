@@ -664,7 +664,7 @@ public sealed class StructureTreeBuilder
 
             case ExistingKidPlacementKind.Index when placement.Index < 0 || placement.Index > count:
                 throw new ArgumentOutOfRangeException(
-                    "index",
+                    nameof(placement),
                     placement.Index,
                     $"The insertion index must be between zero and {count}.");
 

@@ -424,88 +424,88 @@ public sealed class TrueTypeFont
                 break;
 
             case 4:
-            {
-                int segmentsX2 = BinaryPrimitives.ReadUInt16BigEndian(table[6..]);
-                int segments = segmentsX2 / 2;
-                int endsAt = 14;
-                int startsAt = endsAt + segmentsX2 + 2;
-                int deltasAt = startsAt + segmentsX2;
-                int rangesAt = deltasAt + segmentsX2;
-
-                for (int i = 0; i < segments; i++)
                 {
-                    if (rangesAt + (i * 2) + 2 > table.Length)
-                        break;
+                    int segmentsX2 = BinaryPrimitives.ReadUInt16BigEndian(table[6..]);
+                    int segments = segmentsX2 / 2;
+                    int endsAt = 14;
+                    int startsAt = endsAt + segmentsX2 + 2;
+                    int deltasAt = startsAt + segmentsX2;
+                    int rangesAt = deltasAt + segmentsX2;
 
-                    int end = BinaryPrimitives.ReadUInt16BigEndian(table[(endsAt + (i * 2))..]);
-                    int start = BinaryPrimitives.ReadUInt16BigEndian(table[(startsAt + (i * 2))..]);
-                    short delta = BinaryPrimitives.ReadInt16BigEndian(table[(deltasAt + (i * 2))..]);
-                    int rangeOffset = BinaryPrimitives.ReadUInt16BigEndian(table[(rangesAt + (i * 2))..]);
-
-                    if (start > end)
-                        continue;
-
-                    for (int code = start; code <= end && code != 0xFFFF; code++)
+                    for (int i = 0; i < segments; i++)
                     {
-                        ushort glyph;
-                        if (rangeOffset == 0)
-                        {
-                            glyph = (ushort)((code + delta) & 0xFFFF);
-                        }
-                        else
-                        {
-                            int index = rangesAt + (i * 2) + rangeOffset + ((code - start) * 2);
-                            if (index + 2 > table.Length)
-                                continue;
+                        if (rangesAt + (i * 2) + 2 > table.Length)
+                            break;
 
-                            glyph = BinaryPrimitives.ReadUInt16BigEndian(table[index..]);
+                        int end = BinaryPrimitives.ReadUInt16BigEndian(table[(endsAt + (i * 2))..]);
+                        int start = BinaryPrimitives.ReadUInt16BigEndian(table[(startsAt + (i * 2))..]);
+                        short delta = BinaryPrimitives.ReadInt16BigEndian(table[(deltasAt + (i * 2))..]);
+                        int rangeOffset = BinaryPrimitives.ReadUInt16BigEndian(table[(rangesAt + (i * 2))..]);
+
+                        if (start > end)
+                            continue;
+
+                        for (int code = start; code <= end && code != 0xFFFF; code++)
+                        {
+                            ushort glyph;
+                            if (rangeOffset == 0)
+                            {
+                                glyph = (ushort)((code + delta) & 0xFFFF);
+                            }
+                            else
+                            {
+                                int index = rangesAt + (i * 2) + rangeOffset + ((code - start) * 2);
+                                if (index + 2 > table.Length)
+                                    continue;
+
+                                glyph = BinaryPrimitives.ReadUInt16BigEndian(table[index..]);
+                                if (glyph != 0)
+                                    glyph = (ushort)((glyph + delta) & 0xFFFF);
+                            }
+
                             if (glyph != 0)
-                                glyph = (ushort)((glyph + delta) & 0xFFFF);
+                                map.TryAdd(code, glyph);
                         }
-
-                        if (glyph != 0)
-                            map.TryAdd(code, glyph);
                     }
-                }
 
-                break;
-            }
+                    break;
+                }
 
             case 6:
-            {
-                int first = BinaryPrimitives.ReadUInt16BigEndian(table[6..]);
-                int count = BinaryPrimitives.ReadUInt16BigEndian(table[8..]);
-                for (int i = 0; i < count && 10 + (i * 2) + 2 <= table.Length; i++)
-                    map.TryAdd(first + i, BinaryPrimitives.ReadUInt16BigEndian(table[(10 + (i * 2))..]));
-
-                break;
-            }
-
-            case 12:
-            {
-                if (table.Length < 16)
-                    break;
-
-                int groups = (int)BinaryPrimitives.ReadUInt32BigEndian(table[12..]);
-                for (int i = 0; i < groups; i++)
                 {
-                    int record = 16 + (i * 12);
-                    if (record + 12 > table.Length)
-                        break;
+                    int first = BinaryPrimitives.ReadUInt16BigEndian(table[6..]);
+                    int count = BinaryPrimitives.ReadUInt16BigEndian(table[8..]);
+                    for (int i = 0; i < count && 10 + (i * 2) + 2 <= table.Length; i++)
+                        map.TryAdd(first + i, BinaryPrimitives.ReadUInt16BigEndian(table[(10 + (i * 2))..]));
 
-                    uint start = BinaryPrimitives.ReadUInt32BigEndian(table[record..]);
-                    uint end = BinaryPrimitives.ReadUInt32BigEndian(table[(record + 4)..]);
-                    uint glyph = BinaryPrimitives.ReadUInt32BigEndian(table[(record + 8)..]);
-
-                    if (end < start || end - start > 0x10FFFF)
-                        continue;
-
-                    for (uint code = start; code <= end; code++)
-                        map.TryAdd((int)code, (ushort)(glyph + (code - start)));
+                    break;
                 }
 
-                break;
-            }
+            case 12:
+                {
+                    if (table.Length < 16)
+                        break;
+
+                    int groups = (int)BinaryPrimitives.ReadUInt32BigEndian(table[12..]);
+                    for (int i = 0; i < groups; i++)
+                    {
+                        int record = 16 + (i * 12);
+                        if (record + 12 > table.Length)
+                            break;
+
+                        uint start = BinaryPrimitives.ReadUInt32BigEndian(table[record..]);
+                        uint end = BinaryPrimitives.ReadUInt32BigEndian(table[(record + 4)..]);
+                        uint glyph = BinaryPrimitives.ReadUInt32BigEndian(table[(record + 8)..]);
+
+                        if (end < start || end - start > 0x10FFFF)
+                            continue;
+
+                        for (uint code = start; code <= end; code++)
+                            map.TryAdd((int)code, (ushort)(glyph + (code - start)));
+                    }
+
+                    break;
+                }
 
             default:
                 break;

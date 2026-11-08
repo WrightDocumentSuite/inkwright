@@ -109,7 +109,7 @@ A separate document timestamp signature (`DocTimeStamp`, ISO 32000-2 §12.8.5) c
 ```csharp
 byte[] stamped = PdfTimestamper.Timestamp(signed, new PdfTimestampOptions
 {
-    Authority = new Uri("http://timestamp.example.org/tsa"),
+    Authority = new Uri("https://timestamp.example.org/tsa"),
 });
 ```
 
@@ -138,7 +138,49 @@ The library does not fetch anything itself: which OCSP/CRL to obtain and whom to
 
 These APIs assemble B-LT/B-LTA structure but are not by themselves a conformance claim: the application must verify chain, validity periods, and revocation status of supplied data before adding it.
 
-The default timestamp service is an HTTP request to a `Uri`; behind a proxy or in tests it is replaced by `ITimestampAuthority`.
+The default timestamp service is an HTTP request to a `Uri`; behind a proxy or in tests it is replaced by `ITimestampAuthority`. Every RFC 3161 request carries a fresh nonce, and a response whose nonce does not match is rejected.
+
+Use an HTTPS authority endpoint: TLS authenticates the endpoint and protects the exchange in
+transit. The library verifies the returned token's imprint, nonce, complete DER framing, and CMS
+signature, but it deliberately does not decide whether the TSA certificate chain is trusted; that
+chain and revocation policy belongs to the application.
+
+Network signing and timestamping also have asynchronous overloads:
+
+```csharp
+using PdfDocument document = await PdfDocument.LoadAsync("contract.pdf", cancellationToken: cancellationToken);
+
+var timestampClient = new HttpTimestampAuthority(tsa, sharedHttpClient)
+{
+    Timeout = TimeSpan.FromSeconds(20),
+    MaxResponseBytes = 512 * 1024,
+};
+
+byte[] signed = await PdfSigner.SignAsync(document, new PdfSignatureOptions
+{
+    Certificate = certificate,
+    Level = PdfSignatureLevel.Timestamped,
+    TimestampClient = timestampClient,
+}, cancellationToken);
+```
+
+The supplied `HttpClient` stays owned by the application, so reuse it rather than creating one per
+request. `Timeout` bounds one timestamp exchange (in addition to any client policy), and
+`MaxResponseBytes` prevents an authority from returning an unbounded body. The asynchronous
+document overloads operate on a private incremental snapshot, so the caller-owned `PdfDocument`
+remains unchanged after either success or failure and can be reused. Existing implementations that
+provide only `ITimestampAuthority.Send` remain source compatible through the interface's default
+fallback; that fallback is synchronous, so transports should override `SendAsync` when non-blocking
+I/O and cancellation are required. Replaced indirect objects retain their original generation in
+the snapshot. Active archival policy is retained as well, including PDF/A-4's intentional omission
+of the `/Info` dictionary.
+
+That snapshot requires a trustworthy original cross-reference section. If recovery had to rebuild
+the xref table or no valid `startxref` exists, the asynchronous document and file overloads fail
+before adding a field. A full rewrite could remove encryption and invalidate earlier byte-range
+signatures, so the library does not perform one implicitly. If the damage is understood and those
+consequences are acceptable, save an explicitly repaired full copy, inspect it, then reload that
+copy before signing.
 
 ## Certification Signature and Field Locking
 
@@ -196,11 +238,14 @@ var options = new PdfSignatureOptions
 {
     Certificate = certificate,
     Level = PdfSignatureLevel.Timestamped,
-    TimestampAuthority = new Uri("http://timestamp.example.org/tsa"),
+    TimestampAuthority = new Uri("https://timestamp.example.org/tsa"),
 };
 ```
 
-The RFC 3161 request is built from `SignerInfo`, the response is verified and added as an unsigned attribute. This is PAdES B-T level.
+The RFC 3161 request is built from `SignerInfo`. The response must consume the complete DER payload,
+echo the nonce, match the requested imprint, and carry a valid CMS signature before it is added as
+an unsigned attribute. This validates token integrity, not trust in the TSA certificate chain; chain
+and revocation policy remain the application's responsibility. This is PAdES B-T level.
 
 ## External Keys
 
@@ -239,6 +284,14 @@ Verification answers two questions separately: whether the covered bytes changed
 
 When a document is signed twice, the first signature honestly reports that it no longer covers the whole file, and remains intact.
 
-`PdfSignatureInfo` distinguishes document timestamps (`IsDocumentTimestamp`) from certification signatures (`CertificationLevel`). Embedded signature timestamp is verified for real — `TimestampIntact` says whether the RFC 3161 token and its own signature matched, not merely whether it parsed.
+`PdfSignatureInfo` distinguishes document timestamps (`IsDocumentTimestamp`) from certification signatures (`CertificationLevel`) and exposes any `FieldMDP` lock dictionary (`FieldLock`). Embedded signature timestamp is verified for real — `TimestampIntact` says whether the RFC 3161 token and its own signature matched, not merely whether it parsed.
 
-The library does not verify trust in the chain: which roots to trust is application policy, not format policy. `CertificationLevel` reports the declared DocMDP value; the verifier does not yet classify objects in later revisions or decide whether their changes are allowed by that level.
+When incremental updates follow a signature (`CoversWholeDocument == false`), the verifier compares the signed revision snapshot against the final document and populates `AreSubsequentChangesPermitted` and `ModificationViolations`:
+
+- **`DocMDP` (§12.8.2.2)**:
+  - `NoChanges` (`P = 1`): any subsequent modification (other than a pure document timestamp or `/DSS` store) is reported as a violation.
+  - `FormFilling` (`P = 2`): page tree changes (page count, page content streams, resources, media/crop boxes, rotation) and non-widget annotation additions/removals/modifications are reported as violations, while filling existing form fields and signing are permitted.
+  - `FormFillingAndAnnotations` (`P = 3`): page tree and page content/resource modifications are reported as violations, while form filling and annotation updates are permitted.
+- **`FieldMDP` (§12.8.2.4)**: if a signature locks all fields (`PdfFieldLockAction.All`), an explicit list (`Include`), or all except a list (`Exclude`), any subsequent change to a locked field's `/V`, `/DV`, or `/Opt` in a later revision sets `AreSubsequentChangesPermitted = false` and names the modified field in `ModificationViolations`.
+
+The library does not verify trust in the chain: which roots to trust is application policy, not format policy.

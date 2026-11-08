@@ -163,16 +163,16 @@ internal static class XfdfFields
                 break;
 
             case PdfValueKind.Array:
-            {
-                PdfArray array = value.AsArray!;
-                for (int i = 0; i < array.Count; i++)
                 {
-                    foreach (string text in ValueStrings(array.Get(i)))
-                        yield return text;
-                }
+                    PdfArray array = value.AsArray!;
+                    for (int i = 0; i < array.Count; i++)
+                    {
+                        foreach (string text in ValueStrings(array.Get(i)))
+                            yield return text;
+                    }
 
-                break;
-            }
+                    break;
+                }
 
             default:
                 break;

@@ -146,4 +146,22 @@ Invoice read = form.Read<Invoice>();
 IReadOnlyList<string> missing = form.MissingFields<Invoice>();
 ```
 
-No reflection: field names are checked by the compiler, the code runs under Native AOT and survives trimming. Supported types are strings, integers, floating-point, `decimal`, `bool`, enums, `DateTime`, `DateOnly`, `DateTimeOffset`, and `Guid`; a type that does not map to a field value produces warning `IWF002`, and a non-partial type—error `IWF001`. A type nested inside another is supported if all enclosing types are declared `partial`.
+No reflection: the generated member access and conversions are compiler-checked, the code runs
+under Native AOT and survives trimming. A field name from `[PdfField]` is still document data;
+`MissingFields` checks whether that name exists in a particular PDF at runtime. Supported types are
+strings, integers, floating-point, `decimal`, `bool`, enums, `DateTime`, `DateOnly`,
+`DateTimeOffset`, and `Guid`; a type that does not map to a field value produces warning `IWF002`,
+and a non-partial type—error `IWF001`. Unsupported schema shapes such as static, abstract, ref-like,
+or file-local types produce `IWF003`; `IWF004` means the generated `Read` method cannot construct
+the type from its supported mapped members.
+
+Nested generic schemas, readonly record structs, and identifiers that are C# keywords are supported
+when every containing declaration is `partial`. `required` and `init` properties are assigned in the
+generated object initializer. A readonly mapped property must instead be covered by a usable
+instance constructor; otherwise generation stops with `IWF004` rather than emitting broken code.
+
+Reading can use a constructor whose parameters accept the mapped property types through implicit
+conversions. Extra optional or `params` parameters keep their declared defaults. On a positional
+record, `[PdfFieldIgnore]` can be placed directly on the primary-constructor parameter; the member
+is omitted from fill, read, and missing-field checks, and its required constructor argument receives
+the default value.

@@ -18,6 +18,63 @@ PdfReader reader = PdfReader.Open(bytes);
 PdfValue root = reader.Resolve(reader.Trailer[PdfName.Get("Root")]);
 ```
 
+## Resource Limits for Untrusted Files
+
+Every ordinary read gets a document-local `PdfResourceLimits` ledger by default. It bounds the
+buffered input, xref work and sections, indexed objects, object-stream allocations, parsed COS
+values and nesting, filter stages, per-stream decoded output, total retained decoded output, and
+cumulative bytes materialised across filter stages. Lazy work is charged when an object or stream
+is first reached, so a file can open successfully and still be rejected later when code asks for a
+pathological page, image, font, or attachment.
+
+```csharp
+var limits = new PdfResourceLimits(
+    maxInputBytes: 256L * 1024 * 1024,
+    maxDecodedBytesPerStream: 32L * 1024 * 1024,
+    maxTotalDecodedBytes: 128L * 1024 * 1024,
+    maxTotalDecodeWorkBytes: 256L * 1024 * 1024,
+    maxObjects: 250_000,
+    maxParsedValues: 1_000_000);
+
+try
+{
+    using PdfDocument document = PdfDocument.Load(
+        upload,
+        new PdfReadOptions { ResourceLimits = limits });
+    string firstPage = document.Pages[0].ExtractText();
+}
+catch (PdfResourceLimitException exception)
+{
+    log.Warning("Rejected PDF at {LimitName}: {Observed} > {Limit}",
+        exception.LimitName, exception.Observed, exception.Limit);
+}
+```
+
+`PdfResourceLimits.Default` is deliberately generous for desktop use: 1 GiB input, 128 MiB per
+decoded stream, 512 MiB total retained decoded output, 1 GiB of cumulative decode work, 64 filter
+stages, two million xref rows, 4096 xref sections, one million indexed objects, two million
+object-stream entries, four million parsed values, and 128 nesting levels. Services should choose
+lower request-specific values from their upload and memory policy.
+
+Setting `ResourceLimits = null` restores legacy unbounded structural recovery for a trusted batch
+or compatibility sweep. It does not remove the process-wide `PdfFilterLimits.MaxDecodedBytes`
+ceiling. That static property remains for source compatibility and for standalone filter calls;
+prefer per-read limits in concurrent services. A page whose content-stream array crosses its
+combined cap raises `PdfResourceLimitException` instead of returning a truncated prefix.
+
+Resource limits bound work without changing the ordinary reader's damage-recovery rules: malformed
+filter tails that previously yielded a usable prefix remain recoverable until a budget is actually
+exhausted. `PdfResourceLimitException.LimitName` identifies the exact active ceiling, including
+`PdfFilterLimits.MaxDecodedBytes` when the process-wide compatibility cap is lower than the
+request's per-stream limit. Lazy decoded streams are cached once per document, so concurrent reads
+of the same stream share both the bytes and the single budget charge.
+
+The retained-output and work limits are independent. `MaxDecodedBytesPerStream` bounds the final
+cached result and the size of any one intermediate buffer; `MaxTotalDecodedBytes` bounds the sum of
+final results retained by the document. `MaxTotalDecodeWorkBytes` alone counts the sum materialised
+across all filter and predictor stages. A valid multi-stage stream therefore does not spend its
+retained-output allowance once per stage.
+
 ## Diagnostics Instead of Silent Failures
 
 Everything the reader managed to work around ends up in `LoadDiagnostics` with a code and address:
@@ -36,7 +93,10 @@ if (document.Diagnostics.Contains(PdfWarningCode.XrefRebuilt))
     log.Warning("Cross-reference table was rebuilt");
 ```
 
-Codes are listed in `PdfWarningCode`: from `HeaderNotAtStart` and `StreamLengthMismatch` to `PageTreeRecovered` and `DecryptionSuspect`. The only exception the library throws while reading is `PdfFormatException`, and only when the data contains neither a header nor objects.
+Codes are listed in `PdfWarningCode`: from `HeaderNotAtStart` and `StreamLengthMismatch` to
+`PageTreeRecovered` and `DecryptionSuspect`. Unrecoverable structure raises `PdfFormatException`;
+password failure raises `PdfPasswordException`, authenticated-cipher tampering raises
+`PdfTamperedException`, and an exhausted request budget raises `PdfResourceLimitException`.
 
 On the current corpus of 7807 files, 7800 are readable; five rejected files are intentionally damaged fuzzing fixtures without a catalog, header, or readable objects, and two more files are empty and never reach the parser. For all documents admitted by the test policy before rewrite, round-trip completes without failures and preserves the page count.
 
@@ -209,6 +269,28 @@ foreach (PdfTable table in page.ExtractTables())
 The extractor is deliberately conservative: a lone decorative rectangle is ignored, curved or
 borderless tables are not guessed, and safety limits in `TableExtractionOptions` cap pathological
 grids. Applications can combine this geometry result with Tagged PDF structure when both exist.
+
+### Physical Redaction
+
+Drawing a black rectangle over sensitive words leaves the underlying glyphs and images intact in the content stream for anyone who selects text or extracts streams. `page.Redact`, `page.RedactText`, `page.ApplyRedactions`, `document.RedactText`, and `document.ApplyRedactions` physically scrub the content streams:
+
+```csharp
+using Inkwright.Redaction;
+
+PdfRedactionResult result = document.RedactText(
+    "Account 4401-9921",
+    new PdfRedactionOptions
+    {
+        FillColor = PdfColor.Black,
+        OverlayText = "[REDACTED]",
+        OverlayTextColor = PdfColor.White,
+    });
+
+Console.WriteLine($"Removed {result.GlyphsRemoved} glyphs and {result.ImagesRemoved} images");
+document.Save("sanitized.pdf", new PdfSaveOptions { RemoveUnusedObjects = true });
+```
+
+Character codes whose bounding boxes intersect a redaction rectangle are stripped from `Tj`, `TJ`, `'`, and `"` operators and replaced by exact `TJ` positioning adjustments so surviving text on the same line does not shift. Intersecting inline images, image XObjects (plus unreferenced `/XObject` resource entries), and annotations are removed before painting the redaction box as an `/Artifact`. Always save with ` Save(...)` (full rewrite) and `RemoveUnusedObjects = true` rather than `SaveIncremental`, because an incremental update appends to the file without erasing earlier revisions.
 
 ## How Pages Are Named
 

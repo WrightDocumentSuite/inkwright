@@ -55,7 +55,12 @@ public class CorpusJbig2MetricsTests
         }
 
         Assert.Empty(failures);
-        Assert.Equal(142, total);
+        Assert.True(
+            total > 0,
+            "No JBIG2 images were found in the configured corpus. Set INKWRIGHT_CORPUS to a " +
+            "reference tree that contains JBIG2 fixtures.");
+        if (Corpus.IsReferenceInventory)
+            Assert.Equal(142, total);
         Assert.Equal(total, decoded);
     }
 

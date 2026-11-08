@@ -15,9 +15,9 @@ internal sealed record PdfAXmpIdentification(string? Part, string? Conformance, 
 /// <summary>Recognises the RDF envelope and the single document subject used by PDF/A identification.</summary>
 internal static class PdfAXmpStructure
 {
-    private static readonly XNamespace _xmp = "adobe:ns:meta/";
-    private static readonly XNamespace _rdf = "http://www.w3.org/1999/02/22-rdf-syntax-ns#";
-    private static readonly XNamespace _pdfaId = "http://www.aiim.org/pdfa/ns/id/";
+    private static readonly XNamespace Xmp = "adobe:ns:meta/";
+    private static readonly XNamespace Rdf = "http://www.w3.org/1999/02/22-rdf-syntax-ns#";
+    private static readonly XNamespace PdfaId = "http://www.aiim.org/pdfa/ns/id/";
 
     internal static bool TryGetDescriptions(
         XDocument packet,
@@ -26,13 +26,13 @@ internal static class PdfAXmpStructure
     {
         XElement? root = packet.Root;
         XElement? rdf = null;
-        if (root?.Name == _rdf + "RDF")
+        if (root?.Name == Rdf + "RDF")
         {
             rdf = root;
         }
-        else if (root?.Name == _xmp + "xmpmeta")
+        else if (root?.Name == Xmp + "xmpmeta")
         {
-            XElement[] candidates = root.Elements(_rdf + "RDF").ToArray();
+            XElement[] candidates = root.Elements(Rdf + "RDF").ToArray();
             if (candidates.Length == 1)
                 rdf = candidates[0];
         }
@@ -46,7 +46,7 @@ internal static class PdfAXmpStructure
             return false;
         }
 
-        XElement[] found = rdf.Elements(_rdf + "Description").ToArray();
+        XElement[] found = rdf.Elements(Rdf + "Description").ToArray();
         if (found.Length == 0)
         {
             descriptions = [];
@@ -81,20 +81,20 @@ internal static class PdfAXmpStructure
             return false;
         }
 
-        if (!TryReadUnique(documentSubject, _pdfaId + "part", out string? part))
+        if (!TryReadUnique(documentSubject, PdfaId + "part", out string? part))
         {
             problem = "the rdf:Description document subject has conflicting pdfaid:part values.";
             return false;
         }
 
-        if (!TryReadUnique(documentSubject, _pdfaId + "conformance", out string? conformance))
+        if (!TryReadUnique(documentSubject, PdfaId + "conformance", out string? conformance))
         {
             problem =
                 "the rdf:Description document subject has conflicting pdfaid:conformance values.";
             return false;
         }
 
-        if (!TryReadUnique(documentSubject, _pdfaId + "rev", out string? revision))
+        if (!TryReadUnique(documentSubject, PdfaId + "rev", out string? revision))
         {
             problem = "the rdf:Description document subject has conflicting pdfaid:rev values.";
             return false;
@@ -106,7 +106,7 @@ internal static class PdfAXmpStructure
     }
 
     private static bool IsDocumentSubject(XElement description) =>
-        description.Attribute(_rdf + "about")?.Value.Trim().Length == 0 &&
+        description.Attribute(Rdf + "about")?.Value.Trim().Length == 0 &&
         !description.AncestorsAndSelf()
             .Any(element => element.Attribute(XNamespace.Xml + "base") is not null);
 

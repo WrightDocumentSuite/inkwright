@@ -13,7 +13,7 @@ public interface ICMapSource
     /// <summary>Loads a predefined CMap.</summary>
     /// <param name="name">The CMap name, such as <c>90ms-RKSJ-H</c> or <c>Adobe-Japan1-UCS2</c>.</param>
     /// <returns>The map, or <see langword="null"/> when this source does not know the name.</returns>
-    CMap? Load(string name);
+    public CMap? Load(string name);
 }
 
 /// <summary>

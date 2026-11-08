@@ -7,6 +7,7 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" PrivateAssets="all" />
     <PackageReference Include="xunit.v3" />
     <PackageReference Include="xunit.runner.visualstudio" />
   </ItemGroup>
@@ -15,7 +16,7 @@
     <ProjectReference Include="..\..\src\Inkwright.Forms\Inkwright.Forms.csproj" />
     <ProjectReference Include="..\..\src\Inkwright.Layout\Inkwright.Layout.csproj" />
     <ProjectReference Include="..\..\src\Inkwright.Forms.Generator\Inkwright.Forms.Generator.csproj"
-                      OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+                      OutputItemType="Analyzer" ReferenceOutputAssembly="true" />
   </ItemGroup>
 
 </Project>

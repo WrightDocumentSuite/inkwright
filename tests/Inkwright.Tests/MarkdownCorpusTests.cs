@@ -67,7 +67,7 @@ public sealed class MarkdownCorpusTests
         Assert.True(resolved <= referenced, $"Resolved {resolved} of only {referenced} MCID references.");
         Assert.True(failures.Count == 0, string.Join('\n', failures.Take(25)));
 
-        if (Corpus.Files.Count == 7807)
+        if (Corpus.IsReferenceInventory)
         {
             Assert.Equal(24, candidates);
             Assert.Equal(21, exported);

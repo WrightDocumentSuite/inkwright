@@ -28,6 +28,15 @@ public static class LzwFilter
         out bool invalidData) =>
         Decode(data, earlyChange, maxDecodedBytes, strict: true, out limitExceeded, out invalidData);
 
+    /// <summary>Runs the tolerant decoder under an explicit output bound.</summary>
+    internal static byte[] DecodeCompatible(
+        ReadOnlySpan<byte> data,
+        bool earlyChange,
+        int maxDecodedBytes,
+        out bool limitExceeded,
+        out bool invalidData) =>
+        Decode(data, earlyChange, maxDecodedBytes, strict: false, out limitExceeded, out invalidData);
+
     private static byte[] Decode(
         ReadOnlySpan<byte> data,
         bool earlyChange,
@@ -119,7 +128,7 @@ public static class LzwFilter
                     }
                     else
                     {
-                        invalidData = true;
+                        invalidData = strict;
                         return writer.WrittenSpan.ToArray();
                     }
 
@@ -145,7 +154,7 @@ public static class LzwFilter
                 }
             }
 
-            invalidData = true;
+            invalidData = strict;
             return writer.WrittenSpan.ToArray();
         }
         finally

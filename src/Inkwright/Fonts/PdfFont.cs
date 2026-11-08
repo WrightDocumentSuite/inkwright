@@ -217,6 +217,32 @@ public sealed class EmbeddedTrueTypeFont : PdfFont
         document.RegisterFont(this);
     }
 
+    private EmbeddedTrueTypeFont(PdfDocument document, EmbeddedTrueTypeFont source)
+        : base(document, source.BaseFont)
+    {
+        _font = source._font;
+        _subset = source._subset;
+        foreach (KeyValuePair<int, ushort> glyph in source._glyphs)
+            _glyphs.Add(glyph.Key, glyph.Value);
+
+        Id = source.Id;
+        _cidFontId = source._cidFontId;
+        _descriptorId = source._descriptorId;
+        _fontFileId = source._fontFileId;
+        _toUnicodeId = source._toUnicodeId;
+        _type0 = RequireDictionary(Id);
+        _cidFont = RequireDictionary(_cidFontId);
+        _descriptor = RequireDictionary(_descriptorId);
+        document.RegisterFont(this);
+
+        PdfDictionary RequireDictionary(PdfObjectId id) =>
+            document.GetObject(id).AsDictionary ?? throw new InvalidOperationException(
+                $"The embedded font snapshot is missing object {id}.");
+    }
+
+    /// <summary>Copies unfinished subset state into an isolated document snapshot.</summary>
+    internal void CloneForSnapshot(PdfDocument document) => _ = new EmbeddedTrueTypeFont(document, this);
+
     /// <summary>The font program behind this font.</summary>
     public TrueTypeFont Program => _font;
 

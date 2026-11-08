@@ -62,7 +62,8 @@ internal static class CffSubsetter
 
         byte[] charStrings = BuildCharStrings(font, kept);
         byte[]? privateBlock = CopyPrivate(font, usedLocal, out int privateSize);
-        byte[]? fontDictionaries = CopyFontDictionaries(font, fdLocals, usedFdLocal, out List<(int DictSize, byte[] Block)> nestedPrivates);
+        byte[]? fontDictionaries = CopyFontDictionaries(
+            font, fdLocals, usedFdLocal, out List<(Dictionary<int, double[]> Entries, int DictSize, byte[] Block)> nestedPrivates);
 
         return Assemble(
                    font, blocks, charStrings, privateBlock, privateSize,
@@ -466,7 +467,10 @@ internal static class CffSubsetter
     /// absolute, so they are rewritten once the final layout is known.
     /// </summary>
     private static byte[]? CopyFontDictionaries(
-        CffFont font, List<CffIndex> fdLocals, List<HashSet<int>> usedFdLocal, out List<(int DictSize, byte[] Block)> privates)
+        CffFont font,
+        List<CffIndex> fdLocals,
+        List<HashSet<int>> usedFdLocal,
+        out List<(Dictionary<int, double[]> Entries, int DictSize, byte[] Block)> privates)
     {
         privates = [];
 
@@ -488,25 +492,54 @@ internal static class CffSubsetter
         {
             Dictionary<int, double[]> dictionary = CffFont.ReadDictionary(array.Item(font.Data.Span, i));
 
-            if (!dictionary.TryGetValue(CffFont.PrivateOperator, out double[]? priv) || priv.Length < 2)
-                return null;
+            int size = 0;
+            byte[] block = [];
 
-            int size = (int)priv[0];
-            int start = (int)priv[1];
+            if (dictionary.TryGetValue(CffFont.PrivateOperator, out double[]? priv))
+            {
+                if (priv.Length < 2)
+                    return null;
 
-            if (size <= 0 || start <= 0 || start + size > font.Data.Length)
-                return null;
+                size = (int)priv[0];
+                int start = (int)priv[1];
 
-            byte[] block = BuildFontDictionaryPrivate(font.Data, start, size, LocalsOf(fdLocals, i), UsedOf(usedFdLocal, i));
-            privates.Add((size, block));
+                if (size < 0 || start < 0 || start + size > font.Data.Length)
+                    return null;
 
-            // The dictionary is rewritten with a placeholder; only the private entry is kept,
-            // because nothing else in a font dictionary points anywhere. The size operand is the
-            // private dictionary's own, not the block's, and stays fixed at its five-byte width.
-            dictionaries.Add(WriteDictionary([(CffFont.PrivateOperator, [size, 0])]));
+                if (size > 0 && start > 0)
+                    block = BuildFontDictionaryPrivate(font.Data, start, size, LocalsOf(fdLocals, i), UsedOf(usedFdLocal, i));
+            }
+
+            privates.Add((dictionary, size, block));
+
+            // The dictionary is rewritten with a placeholder; every non-Private entry (such as
+            // FontName or FontMatrix) is preserved, and the Private entry stays fixed at its
+            // five-byte operand width so the two-pass layout never shifts.
+            dictionaries.Add(WriteDictionary(BuildFontDictionaryEntries(dictionary, size, 0)));
         }
 
         return WriteIndex(dictionaries);
+    }
+
+    private static List<(int Operator, double[] Operands)> BuildFontDictionaryEntries(
+        Dictionary<int, double[]> dictionary, int privateSize, int privateOffset)
+    {
+        var entries = new List<(int, double[])>(dictionary.Count);
+
+        foreach ((int @operator, double[] operands) in dictionary.OrderBy(entry => entry.Key))
+        {
+            if (@operator == CffFont.PrivateOperator)
+            {
+                if (privateSize > 0)
+                    entries.Add((CffFont.PrivateOperator, [privateSize, privateOffset]));
+            }
+            else
+            {
+                entries.Add((@operator, operands));
+            }
+        }
+
+        return entries;
     }
 
     private static CffIndex LocalsOf(List<CffIndex> fdLocals, int index) =>
@@ -552,7 +585,7 @@ internal static class CffSubsetter
         byte[]? privateBlock,
         int privateSize,
         byte[]? fontDictionaries,
-        List<(int DictSize, byte[] Block)> nestedPrivates,
+        List<(Dictionary<int, double[]> Entries, int DictSize, byte[] Block)> nestedPrivates,
         HashSet<int> usedGlobal)
     {
         ReadOnlySpan<byte> data = font.Data.Span;
@@ -598,7 +631,7 @@ internal static class CffSubsetter
                 buffer.Write(fontDictionaries);
 
                 var starts = new List<int>(nestedPrivates.Count);
-                foreach ((int _, byte[] priv) in nestedPrivates)
+                foreach ((Dictionary<int, double[]> _, int _, byte[] priv) in nestedPrivates)
                 {
                     starts.Add((int)buffer.Length);
                     buffer.Write(priv);
@@ -662,14 +695,18 @@ internal static class CffSubsetter
         return top;
     }
 
-    private static byte[] RewriteFontDictionaries(List<(int DictSize, byte[] Block)> privates, List<int> starts)
+    private static byte[] RewriteFontDictionaries(
+        List<(Dictionary<int, double[]> Entries, int DictSize, byte[] Block)> privates, List<int> starts)
     {
         var dictionaries = new List<byte[]>(privates.Count);
 
         // The Private entry names the private dictionary's own size, not the block's: the trimmed
         // local subroutines sit past the dictionary and are reached through its own Subrs pointer.
         for (int i = 0; i < privates.Count; i++)
-            dictionaries.Add(WriteDictionary([(CffFont.PrivateOperator, [privates[i].DictSize, starts[i]])]));
+        {
+            dictionaries.Add(WriteDictionary(
+                BuildFontDictionaryEntries(privates[i].Entries, privates[i].DictSize, starts[i])));
+        }
 
         return WriteIndex(dictionaries);
     }
@@ -684,9 +721,16 @@ internal static class CffSubsetter
         {
             foreach (double operand in operands)
             {
-                buffer.WriteByte(29);
-                BinaryPrimitives.WriteInt32BigEndian(number, (int)operand);
-                buffer.Write(number);
+                if (operand == Math.Truncate(operand) && operand is >= int.MinValue and <= int.MaxValue)
+                {
+                    buffer.WriteByte(29);
+                    BinaryPrimitives.WriteInt32BigEndian(number, (int)operand);
+                    buffer.Write(number);
+                }
+                else
+                {
+                    WriteRealOperand(buffer, operand);
+                }
             }
 
             if (@operator >= 1200)
@@ -699,6 +743,40 @@ internal static class CffSubsetter
         }
 
         return buffer.ToArray();
+    }
+
+    private static void WriteRealOperand(Stream buffer, double value)
+    {
+        buffer.WriteByte(30);
+        string text = value.ToString("G17", System.Globalization.CultureInfo.InvariantCulture);
+
+        int high = -1;
+        for (int i = 0; i < text.Length; i++)
+        {
+            int nibble = text[i] switch
+            {
+                >= '0' and <= '9' => text[i] - '0',
+                '.' => 10,
+                'E' or 'e' when i + 1 < text.Length && text[i + 1] == '-' => (++i, 12).Item2,
+                'E' or 'e' when i + 1 < text.Length && text[i + 1] == '+' => (++i, 11).Item2,
+                'E' or 'e' => 11,
+                '-' => 14,
+                _ => -1,
+            };
+
+            if (nibble < 0)
+                continue;
+
+            if (high < 0)
+                high = nibble;
+            else
+            {
+                buffer.WriteByte((byte)((high << 4) | nibble));
+                high = -1;
+            }
+        }
+
+        buffer.WriteByte((byte)(high < 0 ? 0xFF : (high << 4) | 0x0F));
     }
 
     private static byte[] WriteIndex(List<byte[]> items)

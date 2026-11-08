@@ -52,36 +52,36 @@ internal static class Type2Charstring
             switch (b)
             {
                 case 14:
-                {
-                    // Four operands, or five when a width is given first.
-                    if (count is 4 or 5)
                     {
-                        baseCode = (int)stack[count - 2];
-                        accentCode = (int)stack[count - 1];
+                        // Four operands, or five when a width is given first.
+                        if (count is 4 or 5)
+                        {
+                            baseCode = (int)stack[count - 2];
+                            accentCode = (int)stack[count - 1];
 
-                        return baseCode is >= 0 and <= MaxStandardCode &&
-                               accentCode is >= 0 and <= MaxStandardCode;
+                            return baseCode is >= 0 and <= MaxStandardCode &&
+                                   accentCode is >= 0 and <= MaxStandardCode;
+                        }
+
+                        return false;
                     }
 
-                    return false;
-                }
-
                 case 12:
-                {
-                    if (i < charstring.Length)
-                        i++;
+                    {
+                        if (i < charstring.Length)
+                            i++;
 
-                    count = 0;
-                    break;
-                }
+                        count = 0;
+                        break;
+                    }
 
                 case 19 or 20:
-                {
-                    // A hint mask carries one bit per stem, which follows the operator inline.
-                    i += (count / 2) + 1;
-                    count = 0;
-                    break;
-                }
+                    {
+                        // A hint mask carries one bit per stem, which follows the operator inline.
+                        i += (count / 2) + 1;
+                        count = 0;
+                        break;
+                    }
 
                 case 10 or 29:
                     // A call into a subroutine: the composite form never hides behind one in
@@ -144,25 +144,25 @@ internal static class Type2Charstring
             switch (b)
             {
                 case 10 or 29:
-                {
-                    // The index is biased so that the commonest subroutines get short encodings.
-                    bool isLocal = b == 10;
-                    CffIndex index = isLocal ? local : global;
-                    HashSet<int> used = isLocal ? usedLocal : usedGlobal;
-
-                    if (count > 0)
                     {
-                        int number = (int)stack[--count] + Bias(index.Count);
+                        // The index is biased so that the commonest subroutines get short encodings.
+                        bool isLocal = b == 10;
+                        CffIndex index = isLocal ? local : global;
+                        HashSet<int> used = isLocal ? usedLocal : usedGlobal;
 
-                        if (number >= 0 && number < index.Count && used.Add(number))
+                        if (count > 0)
                         {
-                            CollectSubroutines(
-                                index.Item(font.Span, number), local, global, font, usedLocal, usedGlobal, depth + 1);
-                        }
-                    }
+                            int number = (int)stack[--count] + Bias(index.Count);
 
-                    break;
-                }
+                            if (number >= 0 && number < index.Count && used.Add(number))
+                            {
+                                CollectSubroutines(
+                                    index.Item(font.Span, number), local, global, font, usedLocal, usedGlobal, depth + 1);
+                            }
+                        }
+
+                        break;
+                    }
 
                 case 11:
                     return;
@@ -171,20 +171,20 @@ internal static class Type2Charstring
                     return;
 
                 case 12:
-                {
-                    if (i < charstring.Length)
-                        i++;
+                    {
+                        if (i < charstring.Length)
+                            i++;
 
-                    count = 0;
-                    break;
-                }
+                        count = 0;
+                        break;
+                    }
 
                 case 19 or 20:
-                {
-                    i += (count / 2) + 1;
-                    count = 0;
-                    break;
-                }
+                    {
+                        i += (count / 2) + 1;
+                        count = 0;
+                        break;
+                    }
 
                 default:
                     count = 0;
@@ -228,12 +228,12 @@ internal static class Type2Charstring
                 return true;
 
             case 255 when i + 4 < data.Length:
-            {
-                int fixedPoint = (data[i + 1] << 24) | (data[i + 2] << 16) | (data[i + 3] << 8) | data[i + 4];
-                value = fixedPoint / 65536.0;
-                i += 5;
-                return true;
-            }
+                {
+                    int fixedPoint = (data[i + 1] << 24) | (data[i + 2] << 16) | (data[i + 3] << 8) | data[i + 4];
+                    value = fixedPoint / 65536.0;
+                    i += 5;
+                    return true;
+                }
 
             default:
                 return false;

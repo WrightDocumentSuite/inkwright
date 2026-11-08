@@ -48,6 +48,16 @@ public class CjkExtractionTests
     }
 
     [Fact]
+    public void ReadsAdobeKrCollectionFromAPdfTwoFontWithNoToUnicodeMap()
+    {
+        byte[] utf16 = Encoding.BigEndianUnicode.GetBytes("한국어");
+
+        using PdfDocument document = PdfDocument.Load(Build("UniKS-UTF16-H", "Adobe", "KR", 9, utf16));
+
+        Assert.Equal("한국어", document.Pages[0].ExtractText().Trim());
+    }
+
+    [Fact]
     public void FallsBackToTheCodesWhenNoTablesAreRegistered()
     {
         byte[] shiftJis = [0x93, 0xFA];

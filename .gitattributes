@@ -1,0 +1,16 @@
+* text=auto eol=lf
+
+*.bcmap binary
+*.cer binary
+*.der binary
+*.gif binary
+*.ico binary
+*.jpeg binary
+*.jpg binary
+*.nupkg binary
+*.p12 binary
+*.pfx binary
+*.pdf binary
+*.png binary
+*.snupkg binary
+*.zip binary

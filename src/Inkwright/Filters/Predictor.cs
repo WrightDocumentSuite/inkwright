@@ -48,6 +48,31 @@ public static class Predictor
             out limitExceeded,
             out invalidData);
 
+    /// <summary>
+    /// Runs the forgiving public predictor semantics under an explicit output bound. Ordinary PDF
+    /// reads use this path so adding a resource ledger does not turn damaged final rows or unknown
+    /// row tags into protected-reader syntax failures.
+    /// </summary>
+    internal static byte[] UndoCompatible(
+        ReadOnlySpan<byte> data,
+        int predictor,
+        int colors,
+        int bitsPerComponent,
+        int columns,
+        int maxDecodedBytes,
+        out bool limitExceeded,
+        out bool invalidData) =>
+        UndoCore(
+            data,
+            predictor,
+            colors,
+            bitsPerComponent,
+            columns,
+            maxDecodedBytes,
+            strict: false,
+            out limitExceeded,
+            out invalidData);
+
     private static byte[] UndoCore(
         ReadOnlySpan<byte> data,
         int predictor,

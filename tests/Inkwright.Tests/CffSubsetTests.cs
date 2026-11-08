@@ -218,6 +218,38 @@ public class CffSubsetTests
         int emptied = CountEmptiedLocalSubroutines(rebuilt, subset);
         int total = before.Sum(entry => entry.Count);
         Assert.True(total == 0 || emptied > 0, "No font-dictionary local subroutine was trimmed.");
+
+        // Non-Private entries in each font dictionary (such as FontName or FontMatrix) survive.
+        foreach ((Dictionary<int, double[]> originalFd, Dictionary<int, double[]> rebuiltFd) in
+                 FontDictionaries(font).Zip(FontDictionaries(rebuilt)))
+        {
+            foreach ((int op, double[] expected) in originalFd)
+            {
+                if (op == CffFont.PrivateOperator)
+                    continue;
+
+                Assert.True(rebuiltFd.TryGetValue(op, out double[]? actual), $"Operator {op} was lost from FDArray.");
+                Assert.Equal(expected.Length, actual.Length);
+                for (int i = 0; i < expected.Length; i++)
+                    Assert.Equal(expected[i], actual[i], precision: 9);
+            }
+        }
+    }
+
+    private static List<Dictionary<int, double[]>> FontDictionaries(CffFont font)
+    {
+        List<Dictionary<int, double[]>> result = [];
+        if (!font.TopDictionary.TryGetValue(CffFont.FdArrayOperator, out double[]? operands) || operands.Length == 0)
+            return result;
+
+        int cursor = (int)operands[^1];
+        if (!CffFont.TryReadIndex(font.Data.Span, ref cursor, out CffIndex array))
+            return result;
+
+        for (int i = 0; i < array.Count; i++)
+            result.Add(CffFont.ReadDictionary(array.Item(font.Data.Span, i)));
+
+        return result;
     }
 
     [Fact]

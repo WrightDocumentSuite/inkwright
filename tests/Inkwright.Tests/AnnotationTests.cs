@@ -660,4 +660,34 @@ public class AnnotationTests
 
         return text.ToString();
     }
+
+    [Fact]
+    public void InternalLinkOverloadAndGoToActionResolveDestinationPageIndex()
+    {
+        using var document = PdfDocument.Create();
+        PdfPage first = document.Pages.Add(PageSize.A4);
+        PdfPage second = document.Pages.Add(PageSize.A4);
+
+        PdfLinkAnnotation directLink = first.Annotations.AddLink(
+            new PdfRectangle(72, 700, 180, 720),
+            destinationPageIndex: 1);
+        Assert.Equal(1, directLink.DestinationPageIndex);
+        Assert.Null(directLink.Uri);
+
+        // Also verify /A << /S /GoTo /D [ pageRef /Fit ] >> action dictionaries.
+        PdfLinkAnnotation actionLink = first.Annotations.AddLink(
+            new PdfRectangle(72, 660, 180, 680),
+            "https://example.org");
+        var destination = new PdfArray(2);
+        destination.Add(PdfValue.Reference(second.Id));
+        destination.Add(PdfValue.Name(PdfName.Get("Fit")));
+        var action = new PdfDictionary(3);
+        action.Set(PdfName.Get("Type"), PdfValue.Name(PdfName.Get("Action")));
+        action.Set(PdfName.Get("S"), PdfValue.Name(PdfName.Get("GoTo")));
+        action.Set(PdfName.Get("D"), PdfValue.Array(destination));
+        actionLink.Dictionary.Remove(PdfName.Get("Dest"));
+        actionLink.Dictionary.Set(PdfName.Get("A"), PdfValue.Dictionary(action));
+
+        Assert.Equal(1, actionLink.DestinationPageIndex);
+    }
 }

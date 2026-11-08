@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using Inkwright.Cos;
@@ -634,9 +635,9 @@ internal sealed class TaggedMarkdownRenderer
                 html.Append("\n    <");
                 html.Append(element);
                 if (cell.RowSpan > 1)
-                    html.Append($" rowspan=\"{cell.RowSpan}\"");
+                    html.Append(CultureInfo.InvariantCulture, $" rowspan=\"{cell.RowSpan}\"");
                 if (cell.ColumnSpan > 1)
-                    html.Append($" colspan=\"{cell.ColumnSpan}\"");
+                    html.Append(CultureInfo.InvariantCulture, $" colspan=\"{cell.ColumnSpan}\"");
                 html.Append('>');
                 html.Append(MarkdownText.HtmlText(cell.Plain));
                 html.Append("</");
@@ -688,7 +689,9 @@ internal sealed class TaggedMarkdownRenderer
                 return ResolveDocumentUri(uri);
             }
 
-            if (!annotation.Get(PdfName.Get("Dest")).IsNull)
+            if (!annotation.Get(PdfName.Get("Dest")).IsNull ||
+                (action?.GetName(PdfName.Get("S"))?.Value == "GoTo" &&
+                 (!action.Get(PdfName.Get("D")).IsNull || !action.Get(PdfName.Get("SD")).IsNull)))
             {
                 _diagnostics.Add(
                     MarkdownExportWarningKind.StructureApproximated,

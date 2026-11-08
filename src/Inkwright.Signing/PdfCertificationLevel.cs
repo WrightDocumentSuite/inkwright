@@ -34,10 +34,20 @@ public sealed record PdfFieldLock
     }
 
     /// <summary>The <c>Action</c> name: <c>All</c>, <c>Include</c> or <c>Exclude</c>.</summary>
-    internal string Action { get; }
+    public string Action { get; }
 
     /// <summary>The field names the action applies to; empty when the action is <c>All</c>.</summary>
-    internal IReadOnlyList<string> Fields { get; }
+    public IReadOnlyList<string> Fields { get; }
+
+    /// <summary>Whether the lock freezes the field with the given fully qualified name.</summary>
+    /// <param name="fieldName">The fully qualified field name to test.</param>
+    public bool IsFieldLocked(string fieldName) => Action switch
+    {
+        "All" => true,
+        "Include" => Fields.Contains(fieldName, StringComparer.Ordinal),
+        "Exclude" => !Fields.Contains(fieldName, StringComparer.Ordinal),
+        _ => false,
+    };
 
     /// <summary>
     /// The change permission this lock also imposes on the whole document (PDF 2.0, the <c>P</c>

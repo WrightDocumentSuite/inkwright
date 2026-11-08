@@ -11,6 +11,10 @@ that only the people who need them pay for.
   unrecoverable input raises `PdfFormatException`. Across a corpus of **7,807 real files, 7,800
   open and 7,555 eligible files rewrite and reload**; five deliberately corrupt fixtures (no
   catalogue or header) are rejected, and two empty files never reach the parser.
+- **Bounds untrusted reads per request**: `PdfResourceLimits` caps buffered input, xref/object and
+  parser work, nesting, filter stages, per-stream expansion, total decoded bytes, and cumulative
+  decode work. Crossing a boundary raises `PdfResourceLimitException`; no truncated stream is
+  cached as if it were complete.
 - **Lossless editing**: an object the model never parsed is copied byte for byte on rewrite. Object
   numbers survive, and so do diagrams, annotations and everything the library did not understand.
 - **Incremental saving**: changes are appended and not one original byte moves — the only way not to
@@ -27,9 +31,12 @@ that only the people who need them pay for.
 - **Images**: JPEG is embedded as it stands, PNG without a single re-encode — its deflate stream is
   already what PDF wants — and alpha becomes a soft mask.
 - **Comments**: notes, highlight/underline/strikeout over words found by search, `FreeText` and
-  callouts, shapes, polylines, ink, stamps, attachments and links. Reply threads and review states
+  callouts, shapes, polylines, ink, stamps, attachments, links and `/Redact` annotations. Reply
+  threads and review states
   per ISO 32000-1, cascading deletion together with the popup and the thread, flattening into page
-  content, export to flat records with the quoted text, and a ready appearance stream for every
+  content, physical content-stream redaction (`Redact`, `RedactText`, `ApplyRedactions`) that removes
+  underlying glyphs and images while preserving the layout of surviving text, export to flat records
+  with the quoted text, and a ready appearance stream for every
   type. Review rounds travel to other tools and back through XFDF (ISO 19444-1) and FDF (§12.7.7),
   merging on `/NM` so a second import does not duplicate anything.
 - **Forms** (`Inkwright.Forms`): typed fields, filling with generated appearance streams,
@@ -37,7 +44,9 @@ that only the people who need them pay for.
   Native AOT.
 - **Signatures** (`Inkwright.Signing`): PAdES building blocks from B-B to B-LTA — signature and
   document timestamps (RFC 3161), the validation data store (DSS/VRI), DocMDP certification
-  signatures and FieldMDP field locking — plus external keys for an HSM, built entirely on the base
+  signatures and FieldMDP field locking with incremental-revision modification verification
+  (`AreSubsequentChangesPermitted`, `ModificationViolations`) — plus external keys for an HSM,
+  built entirely on the base
   class library with no BouncyCastle. For B-LT and B-LTA the application supplies OCSP/CRL data it
   has already verified and sets the trust policy. Digests are SHA-2, and also SHA-3 and SHAKE256 per
   ISO/TS 32001 where the platform provides them; the Edwards curves of ISO/TS 32002 are verified by
@@ -161,15 +170,17 @@ byte[] signed = PdfSigner.Sign(document, new PdfSignatureOptions
 
 ## Performance
 
-A 200-page report (8000 table rows) and a 90-page document, measured on an Intel Core i7-8700 under
-Windows Server 2022 with .NET 10.0.10 and BenchmarkDotNet 0.15.8. Method and comparison notes are in
+A historical 200-page report (8000 table rows) and a 90-page document, measured on an Intel Core
+i7-8700 under Windows Server 2022 with .NET 10.0.10 and BenchmarkDotNet 0.15.8. The comparison used
+PDFsharp 6.2.1 and PdfPig 0.1.11; the benchmark project now pins newer versions, so rerun it before
+treating these ratios as current. Method and comparison notes are in
 [docs/benchmarks.md](https://github.com/WrightDocumentSuite/inkwright/blob/main/docs/benchmarks.md);
 numbers move with the machine, so treat them as a shape rather than a promise.
 
 | | Time | Allocated |
 | --- | ---: | ---: |
 | **Inkwright, canvas, 200 pp.** | **46 ms** | **13.6 MB** |
-| PDFsharp 6.2, 200 pp. | 177 ms | 38.4 MB |
+| PDFsharp 6.2.1, 200 pp. | 177 ms | 38.4 MB |
 | Inkwright, composer, 200 pp. | 345 ms | 110.3 MB |
 | **Inkwright, open a file** | **382 µs** | **188 KB** |
 | PdfPig 0.1.11, open a file | 1,048 µs | 485 KB |
@@ -197,17 +208,22 @@ numbers move with the machine, so treat them as a shape rather than a promise.
 - [ISO 14289 conformance matrix](https://github.com/WrightDocumentSuite/inkwright/blob/main/docs/pdfua-matrix.md)
 - [Reconciliation with ISO 32000-2](https://github.com/WrightDocumentSuite/inkwright/blob/main/docs/pdf20-audit.md)
 - [Verification baseline and regression policy](https://github.com/WrightDocumentSuite/inkwright/blob/main/docs/verification.md)
+- [Fuzzing and crash-corpus operations](https://github.com/WrightDocumentSuite/inkwright/blob/main/docs/fuzzing.md)
 - [Benchmarks](https://github.com/WrightDocumentSuite/inkwright/blob/main/docs/benchmarks.md)
 - [Building the NuGet packages](https://github.com/WrightDocumentSuite/inkwright/blob/main/docs/packaging.md)
+- [Contributing](https://github.com/WrightDocumentSuite/inkwright/blob/main/CONTRIBUTING.md)
+- [Changelog](https://github.com/WrightDocumentSuite/inkwright/blob/main/CHANGELOG.md)
+- [Security policy](https://github.com/WrightDocumentSuite/inkwright/blob/main/SECURITY.md)
 
 ## Building
 
 ```bash
-dotnet build Inkwright.slnx
-dotnet test Inkwright.slnx
-dotnet pack Inkwright.slnx -c Release --output artifacts/packages
-dotnet run --project samples/Inkwright.Samples
-dotnet run -c Release --project benchmarks/Inkwright.Benchmarks -- --filter *
+dotnet restore Inkwright.slnx --locked-mode
+dotnet build Inkwright.slnx -c Release --no-restore
+dotnet test Inkwright.slnx -c Release --no-build --no-restore
+dotnet pack Inkwright.slnx -c Release --no-restore --output artifacts/packages
+dotnet run --project samples/Inkwright.Samples --no-restore
+dotnet run -c Release --project benchmarks/Inkwright.Benchmarks --no-restore -- --filter '*'
 ```
 
 ## Layout of the repository
@@ -219,10 +235,11 @@ src/Inkwright.Cjk              the 168 predefined CMaps of ISO 32000-2 Table 116
 src/Inkwright.Layout           composer, Tagged PDF, PDF/A profiles
 src/Inkwright.Forms            AcroForm: fields, appearances, flattening
 src/Inkwright.Forms.Generator  Roslyn incremental generator (packed into Forms)
-src/Inkwright.Signing          CMS/PAdES signatures on the base class library
+src/Inkwright.Signing          CMS/PAdES signatures on .NET cryptography and Forms
 tests/                         xUnit: round-trip over 7807 real PDFs, extraction checked against
                                PdfPig, layout, tagging, PDF/A, forms, signatures
 benchmarks/                    BenchmarkDotNet against PDFsharp and PdfPig
+fuzz/                          SharpFuzz targets and minimized binary regression seeds
 samples/                       an invoice, low-level drawing, editing, a form, an archival document
 ```
 

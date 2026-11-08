@@ -366,8 +366,11 @@ public sealed class PageDescriptor
 
     /// <summary>Adjusts the style text inherits.</summary>
     /// <param name="configure">Produces the new style from the current one.</param>
-    public void DefaultTextStyle(Func<TextStyle, TextStyle> configure) =>
+    public void DefaultTextStyle(Func<TextStyle, TextStyle> configure)
+    {
+        ArgumentNullException.ThrowIfNull(configure);
         _section.DefaultTextStyle = configure(_section.DefaultTextStyle);
+    }
 
     /// <summary>
     /// Builds a logical structure tree while drawing, which is what makes the result readable by

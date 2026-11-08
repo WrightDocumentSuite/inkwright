@@ -1,5 +1,6 @@
 using Inkwright.Cos;
 using Inkwright.Diagnostics;
+using Inkwright.IO;
 
 namespace Inkwright.Syntax;
 
@@ -11,7 +12,14 @@ namespace Inkwright.Syntax;
 internal interface IPdfStreamDecodePolicyProvider
 {
     /// <summary>The decode policy attached to streams parsed from this reader, when any.</summary>
-    IPdfStreamDecodePolicy? DecodePolicy { get; }
+    public IPdfStreamDecodePolicy? DecodePolicy { get; }
+}
+
+/// <summary>Supplies the ordinary reader's document-local resource ledger.</summary>
+internal interface IPdfResourceBudgetProvider
+{
+    /// <summary>The ledger attached to parsed values and streams, when limits are enabled.</summary>
+    public PdfResourceBudget? ResourceBudget { get; }
 }
 
 internal interface IPdfStreamPayloadReader : IPdfStreamDecodePolicyProvider
@@ -22,7 +30,7 @@ internal interface IPdfStreamPayloadReader : IPdfStreamDecodePolicyProvider
     /// <param name="dataStart">The offset of the first payload byte.</param>
     /// <param name="endPosition">Receives the offset just past <c>endstream</c>.</param>
     /// <returns>The payload bytes, decrypted if the document is encrypted.</returns>
-    ReadOnlyMemory<byte> ReadPayload(PdfDictionary dictionary, int dataStart, out int endPosition);
+    public ReadOnlyMemory<byte> ReadPayload(PdfDictionary dictionary, int dataStart, out int endPosition);
 }
 
 /// <summary>
@@ -38,6 +46,7 @@ internal ref struct PdfObjectParser
     private readonly IPdfResolver? _resolver;
     private readonly IPdfStreamPayloadReader? _streams;
     private readonly IPdfStreamDecodePolicy? _decodePolicy;
+    private readonly PdfResourceBudget? _resourceBudget;
     private int _depth;
     private bool _mayReadIndirectStream;
 
@@ -51,6 +60,8 @@ internal ref struct PdfObjectParser
         _streams = streams;
         _decodePolicy = streams?.DecodePolicy ??
                         (resolver as IPdfStreamDecodePolicyProvider)?.DecodePolicy;
+        _resourceBudget = (streams as IPdfResourceBudgetProvider)?.ResourceBudget ??
+                          (resolver as IPdfResourceBudgetProvider)?.ResourceBudget;
         _lexer = new PdfLexer(data, position, strict: _decodePolicy is not null);
     }
 
@@ -151,7 +162,10 @@ internal ref struct PdfObjectParser
         LastKeyword = default;
 
         if (token != PdfTokenType.EndOfInput)
+        {
             _decodePolicy?.ConsumeParsedValues(1);
+            _resourceBudget?.ConsumeParsedValues(1);
+        }
 
         switch (token)
         {
@@ -226,11 +240,20 @@ internal ref struct PdfObjectParser
 
     private PdfValue ParseArray()
     {
-        if (++_depth > MaxDepth)
+        int depthLimit = _resourceBudget?.Limits.MaxNestingDepth ?? MaxDepth;
+        if (++_depth > depthLimit)
         {
-            if (_decodePolicy is not null)
+            if (_decodePolicy is not null || _resourceBudget is not null)
             {
                 _depth--;
+                if (_resourceBudget is not null)
+                {
+                    throw new PdfResourceLimitException(
+                        nameof(PdfResourceLimits.MaxNestingDepth),
+                        depthLimit,
+                        depthLimit + 1L);
+                }
+
                 throw new PdfFormatException(
                     $"A protected array exceeds the parser nesting limit of {MaxDepth} levels.");
             }
@@ -286,11 +309,20 @@ internal ref struct PdfObjectParser
     private PdfValue ParseDictionaryOrStream()
     {
         bool mayBeIndirectStream = _depth == 0 && _mayReadIndirectStream;
-        if (++_depth > MaxDepth)
+        int depthLimit = _resourceBudget?.Limits.MaxNestingDepth ?? MaxDepth;
+        if (++_depth > depthLimit)
         {
-            if (_decodePolicy is not null)
+            if (_decodePolicy is not null || _resourceBudget is not null)
             {
                 _depth--;
+                if (_resourceBudget is not null)
+                {
+                    throw new PdfResourceLimitException(
+                        nameof(PdfResourceLimits.MaxNestingDepth),
+                        depthLimit,
+                        depthLimit + 1L);
+                }
+
                 throw new PdfFormatException(
                     $"A protected dictionary exceeds the parser nesting limit of {MaxDepth} levels.");
             }
@@ -338,6 +370,7 @@ internal ref struct PdfObjectParser
                 // It is still parser work, so a protected reader must charge it even though it
                 // cannot become part of the resulting value graph.
                 _decodePolicy?.ConsumeParsedValues(1);
+                _resourceBudget?.ConsumeParsedValues(1);
                 continue;
             }
 
@@ -349,6 +382,7 @@ internal ref struct PdfObjectParser
             }
 
             _decodePolicy?.ConsumeParsedValues(1);
+            _resourceBudget?.ConsumeParsedValues(1);
             PdfValue value = ParseValue();
             dictionary.Set(key, value);
         }
@@ -379,7 +413,8 @@ internal ref struct PdfObjectParser
             ReadOnlyMemory<byte> payload = _streams.ReadPayload(dictionary, _lexer.Position, out int endPosition);
             _lexer.Position = endPosition;
             _decodePolicy?.ConsumeParsedValues(1);
-            return PdfValue.Stream(new PdfStream(dictionary, payload, _decodePolicy));
+            _resourceBudget?.ConsumeParsedValues(1);
+            return PdfValue.Stream(new PdfStream(dictionary, payload, _decodePolicy, _resourceBudget));
         }
 
         _lexer.Position = afterDictionary;

@@ -11,9 +11,11 @@ namespace Inkwright.IO;
 /// parsed the first time they are asked for, so opening a large file costs only the cross-reference
 /// pass. Damage is worked around and reported through <see cref="Diagnostics"/> rather than thrown.
 /// </summary>
-public sealed partial class PdfReader : IPdfResolver
+public sealed partial class PdfReader : IPdfResolver, IPdfResourceBudgetProvider
 {
     private const int MaxResolveDepth = 64;
+    private const int ReadBufferSize = 81_920;
+    private const string InputBufferCapacityLimitName = "InputBufferCapacity";
 
     private readonly byte[] _data;
     private readonly ReadOnlyMemory<byte> _memory;
@@ -24,6 +26,7 @@ public sealed partial class PdfReader : IPdfResolver
     private readonly Dictionary<int, (int Start, int End)> _protectedStreamPayloadRanges = [];
     private readonly HashSet<int> _loading = [];
     private readonly PdfReadOptions _options;
+    private readonly PdfResourceBudget? _resourceBudget;
 
     private Dictionary<int, long>? _scannedOffsets;
     private StandardSecurityHandler? _security;
@@ -35,6 +38,10 @@ public sealed partial class PdfReader : IPdfResolver
         _data = data;
         _memory = data;
         _options = options;
+        _resourceBudget = options.StreamDecodePolicy is null && options.ResourceLimits is { } limits
+            ? new PdfResourceBudget(limits)
+            : null;
+        _resourceBudget?.CheckInputLength(data.LongLength);
         Diagnostics = new LoadDiagnostics(options.MaxWarnings);
         Diagnostics.SetSink(options.OnWarning);
         Trailer = new PdfDictionary { Resolver = this };
@@ -82,6 +89,12 @@ public sealed partial class PdfReader : IPdfResolver
     /// <summary>Whether streams and structural objects are being parsed under a fail-closed policy.</summary>
     internal bool UsesProtectedDecoding => _options.StreamDecodePolicy is not null;
 
+    /// <summary>The effective per-stream output cap for this document and its exact source.</summary>
+    internal PdfEffectiveStreamLimit DecodedStreamLimit =>
+        _resourceBudget?.StreamLimit ?? PdfResourceBudget.ProcessWideStreamLimit();
+
+    PdfResourceBudget? IPdfResourceBudgetProvider.ResourceBudget => _resourceBudget;
+
     /// <summary>Opens a file from a byte array, which the reader keeps a reference to.</summary>
     /// <param name="data">The whole file.</param>
     /// <param name="options">How much damage to tolerate and what password to use.</param>
@@ -93,22 +106,35 @@ public sealed partial class PdfReader : IPdfResolver
         return reader;
     }
 
+    /// <summary>
+    /// Reopens bytes derived from this document while reusing the already authenticated file key.
+    /// This keeps transactional incremental operations possible for encrypted documents without
+    /// retaining or asking for the caller's password again.
+    /// </summary>
+    internal PdfReader ReopenIncremental(byte[] data)
+    {
+        ArgumentNullException.ThrowIfNull(data);
+        var reader = new PdfReader(data, _options);
+        reader.Initialize(_security);
+        return reader;
+    }
+
     /// <summary>Opens a file from a stream, reading it fully into memory.</summary>
     /// <param name="stream">The stream to read; it is left open.</param>
     /// <param name="options">How much damage to tolerate and what password to use.</param>
     public static PdfReader Open(Stream stream, PdfReadOptions? options = null)
     {
         ArgumentNullException.ThrowIfNull(stream);
+        PdfReadOptions effectiveOptions = options ?? PdfReadOptions.Default;
 
         if (stream is MemoryStream memory && memory.TryGetBuffer(out ArraySegment<byte> segment) &&
             segment.Offset == 0 && segment.Count == segment.Array!.Length)
         {
-            return Open(segment.Array, options);
+            return Open(segment.Array, effectiveOptions);
         }
 
-        using var buffer = new MemoryStream();
-        stream.CopyTo(buffer);
-        return Open(buffer.ToArray(), options);
+        byte[] data = ReadToEnd(stream, InputLimit(effectiveOptions));
+        return Open(data, effectiveOptions);
     }
 
     /// <summary>Opens a file from disk.</summary>
@@ -118,8 +144,23 @@ public sealed partial class PdfReader : IPdfResolver
     public static async Task<PdfReader> OpenAsync(
         string path, PdfReadOptions? options = null, CancellationToken cancellationToken = default)
     {
-        byte[] data = await File.ReadAllBytesAsync(path, cancellationToken).ConfigureAwait(false);
-        return Open(data, options);
+        ArgumentException.ThrowIfNullOrWhiteSpace(path);
+        PdfReadOptions effectiveOptions = options ?? PdfReadOptions.Default;
+        FileStream stream = new(
+            path,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.Read,
+            bufferSize: 1,
+            FileOptions.Asynchronous | FileOptions.SequentialScan);
+        await using (stream.ConfigureAwait(false))
+        {
+            byte[] data = await ReadToEndAsync(
+                stream,
+                InputLimit(effectiveOptions),
+                cancellationToken).ConfigureAwait(false);
+            return Open(data, effectiveOptions);
+        }
     }
 
     /// <summary>Opens a file from a stream, reading it fully into memory.</summary>
@@ -130,11 +171,212 @@ public sealed partial class PdfReader : IPdfResolver
         Stream stream, PdfReadOptions? options = null, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(stream);
+        PdfReadOptions effectiveOptions = options ?? PdfReadOptions.Default;
+        byte[] data = await ReadToEndAsync(
+            stream,
+            InputLimit(effectiveOptions),
+            cancellationToken).ConfigureAwait(false);
+        return Open(data, effectiveOptions);
+    }
+
+    private static long InputLimit(PdfReadOptions options) =>
+        options.StreamDecodePolicy is null
+            ? options.ResourceLimits?.MaxInputBytes ?? long.MaxValue
+            : long.MaxValue;
+
+    private static byte[] ReadToEnd(Stream stream, long limit)
+    {
+        if (TryGetRemainingLength(stream, limit, out int remaining))
+        {
+            byte[] exact = GC.AllocateUninitializedArray<byte>(remaining);
+            int filled = 0;
+            while (filled < exact.Length)
+            {
+                int read = stream.Read(exact.AsSpan(filled));
+                if (read == 0)
+                {
+                    Array.Resize(ref exact, filled);
+                    return exact;
+                }
+
+                filled += read;
+            }
+
+            int extra = stream.ReadByte();
+            if (extra < 0)
+                return exact;
+
+            return ReadGrowing(stream, limit, exact, (byte)extra);
+        }
 
         using var buffer = new MemoryStream();
-        await stream.CopyToAsync(buffer, cancellationToken).ConfigureAwait(false);
-        return Open(buffer.ToArray(), options);
+        byte[] chunk = new byte[ReadBufferSize];
+        while (true)
+        {
+            int read = stream.Read(chunk, 0, chunk.Length);
+            if (read == 0)
+                return buffer.ToArray();
+
+            if (read > limit - buffer.Length)
+            {
+                throw new PdfResourceLimitException(
+                    nameof(PdfResourceLimits.MaxInputBytes),
+                    limit,
+                    buffer.Length + read);
+            }
+
+            buffer.Write(chunk, 0, read);
+        }
     }
+
+    private static async Task<byte[]> ReadToEndAsync(
+        Stream stream,
+        long limit,
+        CancellationToken cancellationToken)
+    {
+        if (TryGetRemainingLength(stream, limit, out int remaining))
+        {
+            byte[] exact = GC.AllocateUninitializedArray<byte>(remaining);
+            int filled = 0;
+            while (filled < exact.Length)
+            {
+                int read = await stream.ReadAsync(
+                    exact.AsMemory(filled),
+                    cancellationToken).ConfigureAwait(false);
+                if (read == 0)
+                {
+                    Array.Resize(ref exact, filled);
+                    return exact;
+                }
+
+                filled += read;
+            }
+
+            byte[] extra = new byte[1];
+            int extraCount = await stream.ReadAsync(extra, cancellationToken).ConfigureAwait(false);
+            if (extraCount == 0)
+                return exact;
+
+            return await ReadGrowingAsync(
+                stream,
+                limit,
+                exact,
+                extra[0],
+                cancellationToken).ConfigureAwait(false);
+        }
+
+        using var buffer = new MemoryStream();
+        byte[] chunk = new byte[ReadBufferSize];
+        while (true)
+        {
+            int read = await stream.ReadAsync(chunk, cancellationToken).ConfigureAwait(false);
+            if (read == 0)
+                return buffer.ToArray();
+
+            if (read > limit - buffer.Length)
+            {
+                throw new PdfResourceLimitException(
+                    nameof(PdfResourceLimits.MaxInputBytes),
+                    limit,
+                    buffer.Length + read);
+            }
+
+            await buffer.WriteAsync(chunk.AsMemory(0, read), cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private static bool TryGetRemainingLength(Stream stream, long limit, out int remaining)
+    {
+        remaining = 0;
+        if (!stream.CanSeek)
+            return false;
+
+        long value = stream.Length - stream.Position;
+        if (value < 0)
+            throw new IOException("The stream position is beyond its declared length.");
+        if (value > limit)
+            throw new PdfResourceLimitException(nameof(PdfResourceLimits.MaxInputBytes), limit, value);
+        if (value > Array.MaxLength)
+            throw new PdfResourceLimitException(InputBufferCapacityLimitName, Array.MaxLength, value);
+
+        remaining = (int)value;
+        return true;
+    }
+
+    private static byte[] ReadGrowing(Stream stream, long limit, byte[] prefix, byte first)
+    {
+        if (prefix.LongLength >= limit)
+        {
+            throw new PdfResourceLimitException(
+                nameof(PdfResourceLimits.MaxInputBytes),
+                limit,
+                MoreThan(limit));
+        }
+        if (prefix.LongLength >= Array.MaxLength)
+            throw new PdfResourceLimitException(InputBufferCapacityLimitName, Array.MaxLength, prefix.LongLength + 1);
+
+        using var buffer = new MemoryStream();
+        buffer.Write(prefix);
+        buffer.WriteByte(first);
+        byte[] chunk = new byte[ReadBufferSize];
+        while (true)
+        {
+            int read = stream.Read(chunk, 0, chunk.Length);
+            if (read == 0)
+                return buffer.ToArray();
+
+            EnsureInputCapacity(limit, buffer.Length, read);
+            buffer.Write(chunk, 0, read);
+        }
+    }
+
+    private static async Task<byte[]> ReadGrowingAsync(
+        Stream stream,
+        long limit,
+        byte[] prefix,
+        byte first,
+        CancellationToken cancellationToken)
+    {
+        if (prefix.LongLength >= limit)
+        {
+            throw new PdfResourceLimitException(
+                nameof(PdfResourceLimits.MaxInputBytes),
+                limit,
+                MoreThan(limit));
+        }
+        if (prefix.LongLength >= Array.MaxLength)
+            throw new PdfResourceLimitException(InputBufferCapacityLimitName, Array.MaxLength, prefix.LongLength + 1);
+
+        using var buffer = new MemoryStream();
+        await buffer.WriteAsync(prefix, cancellationToken).ConfigureAwait(false);
+        buffer.WriteByte(first);
+        byte[] chunk = new byte[ReadBufferSize];
+        while (true)
+        {
+            int read = await stream.ReadAsync(chunk, cancellationToken).ConfigureAwait(false);
+            if (read == 0)
+                return buffer.ToArray();
+
+            EnsureInputCapacity(limit, buffer.Length, read);
+            await buffer.WriteAsync(chunk.AsMemory(0, read), cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private static void EnsureInputCapacity(long limit, long current, int additional)
+    {
+        long requested = current + additional;
+        if (additional > limit - current)
+        {
+            throw new PdfResourceLimitException(
+                nameof(PdfResourceLimits.MaxInputBytes),
+                limit,
+                requested);
+        }
+        if (requested > Array.MaxLength)
+            throw new PdfResourceLimitException(InputBufferCapacityLimitName, Array.MaxLength, requested);
+    }
+
+    private static long MoreThan(long limit) => limit == long.MaxValue ? limit : limit + 1;
 
     /// <summary>Fetches an indirect object.</summary>
     /// <param name="number">The object number.</param>
@@ -365,11 +607,11 @@ public sealed partial class PdfReader : IPdfResolver
         return start >= 0 && end >= start && end <= _data.Length;
     }
 
-    private void Initialize()
+    private void Initialize(StandardSecurityHandler? authenticatedSecurity = null)
     {
         ParseHeader();
         LoadCrossReferences();
-        SetUpSecurity();
+        SetUpSecurity(authenticatedSecurity);
         ValidateProtectedLiveObjects();
         ResolveCatalog();
     }
@@ -434,7 +676,7 @@ public sealed partial class PdfReader : IPdfResolver
             Diagnostics.Add(PdfWarningCode.UnknownVersion, "The header version could not be parsed.");
     }
 
-    private void SetUpSecurity()
+    private void SetUpSecurity(StandardSecurityHandler? authenticatedSecurity)
     {
         PdfValue encryptValue = Trailer[PdfNames.Encrypt];
         if (encryptValue.IsNull)
@@ -447,6 +689,16 @@ public sealed partial class PdfReader : IPdfResolver
         if (encrypt is null)
         {
             Diagnostics.Add(PdfWarningCode.UnsupportedSecurityHandler, "The Encrypt entry is not a dictionary.");
+            return;
+        }
+
+        if (authenticatedSecurity is not null)
+        {
+            _security = authenticatedSecurity;
+            _cache.Clear();
+            _objectStreams.Clear();
+            if (encryptNumber > 0)
+                _cache[encryptNumber] = PdfValue.Dictionary(encrypt);
             return;
         }
 

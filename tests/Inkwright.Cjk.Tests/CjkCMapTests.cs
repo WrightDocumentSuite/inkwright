@@ -80,6 +80,7 @@ public class CjkCMapTests
         Assert.Equal("中", Text("UniGB-UCS2-H", "Adobe-GB1-UCS2", 0x4E2D));
         Assert.Equal("中", Text("UniCNS-UCS2-H", "Adobe-CNS1-UCS2", 0x4E2D));
         Assert.Equal("한", Text("UniKS-UCS2-H", "Adobe-Korea1-UCS2", 0xD55C));
+        Assert.Equal("한", Text("UniKS-UTF16-H", "Adobe-KR-UCS2", 0xD55C));
     }
 
     [Fact]

@@ -20,16 +20,16 @@ public enum PdfSignatureLevel
 public interface IExternalSigner
 {
     /// <summary>The certificate the signature is made with.</summary>
-    X509Certificate2 Certificate { get; }
+    public X509Certificate2 Certificate { get; }
 
     /// <summary>The chain to embed alongside the certificate, leaf first.</summary>
-    IReadOnlyList<X509Certificate2> Chain => [];
+    public IReadOnlyList<X509Certificate2> Chain => [];
 
     /// <summary>Signs a digest.</summary>
     /// <param name="digest">The bytes to sign, already hashed with <paramref name="hashAlgorithm"/>.</param>
     /// <param name="hashAlgorithm">The algorithm the digest was produced with.</param>
     /// <returns>The signature value, DER-encoded when the algorithm calls for structure (ECDSA).</returns>
-    byte[] SignHash(ReadOnlyMemory<byte> digest, HashAlgorithmName hashAlgorithm);
+    public byte[] SignHash(ReadOnlyMemory<byte> digest, HashAlgorithmName hashAlgorithm);
 
     /// <summary>
     /// Signs a whole message. Only an Edwards-curve signer needs to override this: RFC 8419 has
@@ -38,7 +38,7 @@ public interface IExternalSigner
     /// </summary>
     /// <param name="message">The exact bytes the signature must cover.</param>
     /// <param name="hashAlgorithm">The digest algorithm the signature declares.</param>
-    byte[] SignMessage(ReadOnlyMemory<byte> message, HashAlgorithmName hashAlgorithm) =>
+    public byte[] SignMessage(ReadOnlyMemory<byte> message, HashAlgorithmName hashAlgorithm) =>
         SignHash(CmsBuilder.Hash(message.Span, hashAlgorithm), hashAlgorithm);
 }
 
@@ -140,7 +140,12 @@ internal sealed class CertificateSigner(X509Certificate2 certificate, IReadOnlyL
     public byte[] SignHash(ReadOnlyMemory<byte> digest, HashAlgorithmName hashAlgorithm)
     {
         if (Certificate.GetRSAPrivateKey() is { } rsa)
-            return rsa.SignHash(digest.Span, hashAlgorithm, RSASignaturePadding.Pkcs1);
+        {
+            HashAlgorithmName paddingHash = hashAlgorithm == PdfSignatureAlgorithms.Shake256
+                ? HashAlgorithmName.SHA512
+                : hashAlgorithm;
+            return rsa.SignHash(digest.Span, paddingHash, RSASignaturePadding.Pkcs1);
+        }
 
         if (Certificate.GetECDsaPrivateKey() is { } ecdsa)
             return ecdsa.SignHash(digest.Span);

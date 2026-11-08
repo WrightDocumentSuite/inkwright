@@ -144,6 +144,8 @@ public static class ContainerExtensions
         /// <param name="configure">Sets the bounds on the constraint element.</param>
         public Container Constrain(Action<ConstrainedElement> configure)
         {
+            ArgumentNullException.ThrowIfNull(configure);
+
             var element = new ConstrainedElement();
             configure(element);
             container.Child = element;
@@ -274,7 +276,11 @@ public sealed class TextDescriptor
 
     /// <summary>Adjusts the base style.</summary>
     /// <param name="configure">Produces the new style from the current one.</param>
-    public void Style(Func<TextStyle, TextStyle> configure) => _element.BaseStyle = configure(_element.BaseStyle);
+    public void Style(Func<TextStyle, TextStyle> configure)
+    {
+        ArgumentNullException.ThrowIfNull(configure);
+        _element.BaseStyle = configure(_element.BaseStyle);
+    }
 
     /// <summary>Aligns the block to the left.</summary>
     public void AlignLeft() => _element.BaseStyle = _element.BaseStyle with { Alignment = TextAlignment.Left };

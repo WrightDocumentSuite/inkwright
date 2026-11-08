@@ -11,5 +11,5 @@ public interface IPdfResolver
     /// it designates. Broken or cyclic references resolve to the null object.
     /// </summary>
     /// <param name="value">The value to resolve; non-references are returned unchanged.</param>
-    PdfValue Resolve(PdfValue value);
+    public PdfValue Resolve(PdfValue value);
 }

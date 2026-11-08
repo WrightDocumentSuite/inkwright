@@ -232,35 +232,35 @@ internal sealed class CcittDecoder
             switch (mode)
             {
                 case CcittMode.Pass:
-                {
-                    // The run continues past the change above; no colour change is recorded.
-                    a0 = FindB(a0, white, second: true);
-                    break;
-                }
+                    {
+                        // The run continues past the change above; no colour change is recorded.
+                        a0 = FindB(a0, white, second: true);
+                        break;
+                    }
 
                 case CcittMode.Vertical:
-                {
-                    int change = Math.Clamp(FindB(a0, white, second: false) + offset, 0, _options.Columns);
-                    Append(change);
-                    a0 = change;
-                    white = !white;
-                    break;
-                }
+                    {
+                        int change = Math.Clamp(FindB(a0, white, second: false) + offset, 0, _options.Columns);
+                        Append(change);
+                        a0 = change;
+                        white = !white;
+                        break;
+                    }
 
                 case CcittMode.Horizontal:
-                {
-                    if (!TryReadRun(white, out int first) || !TryReadRun(!white, out int second))
-                        return false;
+                    {
+                        if (!TryReadRun(white, out int first) || !TryReadRun(!white, out int second))
+                            return false;
 
-                    int start = a0 < 0 ? 0 : a0;
-                    int middle = Math.Min(start + first, _options.Columns);
-                    int end = Math.Min(middle + second, _options.Columns);
+                        int start = a0 < 0 ? 0 : a0;
+                        int middle = Math.Min(start + first, _options.Columns);
+                        int end = Math.Min(middle + second, _options.Columns);
 
-                    Append(middle);
-                    Append(end);
-                    a0 = end;
-                    break;
-                }
+                        Append(middle);
+                        Append(end);
+                        a0 = end;
+                        break;
+                    }
 
                 case CcittMode.EndOfLine:
                     return _currentCount > 0 && Finish();

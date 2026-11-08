@@ -106,35 +106,35 @@ internal static class PageLineFinder
                     break;
 
                 case PdfOperator.LineTo when operands.Length >= 2:
-                {
-                    PdfPoint next = transform.Transform(new PdfPoint(operands[0].AsNumber, operands[1].AsNumber));
-                    if (hasCurrent)
-                        path.Add((current, next));
-                    current = next;
-                    hasCurrent = true;
-                    break;
-                }
+                    {
+                        PdfPoint next = transform.Transform(new PdfPoint(operands[0].AsNumber, operands[1].AsNumber));
+                        if (hasCurrent)
+                            path.Add((current, next));
+                        current = next;
+                        hasCurrent = true;
+                        break;
+                    }
 
                 case PdfOperator.Rectangle when operands.Length >= 4:
-                {
-                    double x = operands[0].AsNumber;
-                    double y = operands[1].AsNumber;
-                    double width = operands[2].AsNumber;
-                    double height = operands[3].AsNumber;
-                    PdfPoint a = transform.Transform(new PdfPoint(x, y));
-                    PdfPoint b = transform.Transform(new PdfPoint(x + width, y));
-                    PdfPoint c = transform.Transform(new PdfPoint(x + width, y + height));
-                    PdfPoint d = transform.Transform(new PdfPoint(x, y + height));
-                    path.Add((a, b));
-                    path.Add((b, c));
-                    path.Add((c, d));
-                    path.Add((d, a));
-                    rectangles.Add(new FilledRectangle(a, b, c, d));
-                    current = a;
-                    subpathStart = a;
-                    hasCurrent = true;
-                    break;
-                }
+                    {
+                        double x = operands[0].AsNumber;
+                        double y = operands[1].AsNumber;
+                        double width = operands[2].AsNumber;
+                        double height = operands[3].AsNumber;
+                        PdfPoint a = transform.Transform(new PdfPoint(x, y));
+                        PdfPoint b = transform.Transform(new PdfPoint(x + width, y));
+                        PdfPoint c = transform.Transform(new PdfPoint(x + width, y + height));
+                        PdfPoint d = transform.Transform(new PdfPoint(x, y + height));
+                        path.Add((a, b));
+                        path.Add((b, c));
+                        path.Add((c, d));
+                        path.Add((d, a));
+                        rectangles.Add(new FilledRectangle(a, b, c, d));
+                        current = a;
+                        subpathStart = a;
+                        hasCurrent = true;
+                        break;
+                    }
 
                 case PdfOperator.ClosePath:
                     ClosePath(path, ref current, subpathStart, hasCurrent);

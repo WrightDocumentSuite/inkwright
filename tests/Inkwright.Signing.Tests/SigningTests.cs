@@ -162,6 +162,32 @@ public class SigningTests
         Assert.True(Assert.Single(PdfSignatureVerifier.Verify(reopened, signed)).IsIntact);
     }
 
+    [Fact]
+    public async Task AsyncSigningFinishesFontsOnlyInThePrivateSnapshot()
+    {
+        string? fontPath = Fonts.SystemFonts.Find("Arial") ?? Fonts.SystemFonts.Find("DejaVuSans");
+        Assert.SkipWhen(fontPath is null, "PDF/A needs an embeddable font and none was found.");
+
+        using X509Certificate2 certificate = CreateCertificate("CN=Async Archival Signer");
+        using var document = PdfDocument.Create();
+        Fonts.PdfFont font = document.Fonts.Embed(fontPath!);
+        BuildArchivalPage(document, font);
+        Layout.PdfAProfile.Apply(
+            document,
+            Layout.PdfAConformance.A2B,
+            new Layout.PdfAOptions { Language = "en" });
+
+        byte[] signed = await PdfSigner.SignAsync(
+            document,
+            new PdfSignatureOptions { Certificate = certificate },
+            TestContext.Current.CancellationToken);
+
+        using PdfDocument reopened = PdfDocument.Load(signed);
+        Assert.Empty(Layout.PdfAProfile.Validate(reopened, Layout.PdfAConformance.A2B));
+        Assert.True(Assert.Single(PdfSignatureVerifier.Verify(reopened, signed)).IsIntact);
+        Assert.Null(Forms.PdfForm.Open(document));
+    }
+
     private static void BuildArchivalPage(PdfDocument document, Fonts.PdfFont font)
     {
         Report.Create()

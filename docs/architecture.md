@@ -9,7 +9,7 @@ that only users who need them pay for. Each layer is public and self-contained.
 ```
 L3  Inkwright.Layout    layout engine: Measure/Draw, text layout, tables, tags, PDF/A
     Inkwright.Forms     AcroForm: fields, appearance, flatten, [PdfForm] + source generator
-    Inkwright.Signing   signatures: CMS/PAdES, RFC 3161, verification — BCL only
+    Inkwright.Signing   signatures: CMS/PAdES, RFC 3161, verification — .NET crypto + Forms
     Inkwright.Cjk       168 predefined CMap tables from ISO 32000-2 Table 116, in binary form
 L2  DOM                 PdfDocument / PdfPage / ContentCanvas / fonts / text extraction
                         color, functions, image decoding, merging, structure tree
@@ -20,6 +20,8 @@ L0  COS + filters       PdfValue, PdfName, lexer, Flate/LZW/A85/AHx/RL/Brotli, p
 `Inkwright.Layout`, `Inkwright.Forms`, `Inkwright.Signing`, and `Inkwright.Cjk` are add-ons on top of L2.
 The core does not reference any of them, so someone who only needs reading and writing pays nothing
 for the layout engine, appearance-stream generation, cryptography, or megabytes of CJK tables.
+Signing intentionally depends on Forms because a PDF signature is stored in an AcroForm signature
+field; its CMS and RFC 3161 implementation otherwise uses the .NET cryptography stack.
 
 `Inkwright.Cjk` is wired through `CMapProvider`: the core asks a registered source for predefined
 CMaps and falls back to two-byte identity when no source is present. Registration is explicit —
@@ -41,9 +43,9 @@ fewer than twelve entries — the overwhelming majority of dictionaries in real 
 is preserved, so a rewritten file is byte-stable.
 
 The lexer is a `ref struct` over `ReadOnlySpan<byte>`; §7.2.2 character classes are defined as
-`SearchValues<byte>`, so token boundary search is vectorized. The object parser is total: any syntax
-breakdown degrades to a `null` object, not an exception, and a depth limit prevents hostile nesting
-from eating the stack.
+`SearchValues<byte>`, so token boundary search is vectorized. Recoverable syntax breakdown normally
+degrades to a `null` object. Explicit resource limits, password failures, and inputs that have no
+recognizable PDF structure remain typed failures instead of being mistaken for an empty document.
 
 ### Key Decision: The Resolver Lives in the Graph
 
@@ -69,8 +71,9 @@ Recovery is built in, not bolted on:
 | No `/Root` | Finds the catalog by scanning, including object streams |
 | Broken Flate stream | Returns whatever decompressed successfully |
 
-All of this becomes `PdfWarning` with a code in `LoadDiagnostics`. `PdfFormatException` is thrown in
-exactly one case: the data contains neither a header nor a single indirect object.
+All recoveries become `PdfWarning` entries in `LoadDiagnostics`. An input with neither a header nor a
+single indirect object raises `PdfFormatException`; exceeding a configured reader budget raises
+`PdfResourceLimitException` with the exact limit name, configured value, and observed value.
 
 This tolerance is the general-purpose reading contract. The byte and file entry points of the
 PDF/A validator use a protected reader instead: recovery is disabled before the root file or an
@@ -109,8 +112,11 @@ object; Part 4 keeps its normative `Catalog/Names/EmbeddedFiles` condition. Ever
 a recognised `EF`/`RF` attachment payload is decoded once in a strict preflight; attachment payloads
 keep their dedicated decode and recursive-validation reservations.
 
-The stream expansion limit (`PdfFilterLimits`, 128 MB by default) closes zip bombs: a few kilobytes
-of deflate can claim a terabyte.
+General-purpose reads use an immutable per-document `PdfResourceLimits` ledger by default. It bounds
+the buffered file, xref sections and rows, object count, parsed values and nesting, filter stages,
+per-stream expansion, retained decoded bytes, and cumulative filter work. `PdfFilterLimits` remains
+a process-wide 128 MB hard ceiling for standalone/source-compatible decode calls; request-specific
+limits are preferred in servers and concurrent applications.
 
 ## L1: Writing
 
@@ -163,7 +169,7 @@ reason to discard an image we cannot reproduce. Details in [annotations.md](anno
 | static abstract members | `IPdfFormSchema<T>` |
 | Incremental source generator | `Inkwright.Forms.Generator` |
 | `AsnWriter` / `SignedCms` / `Rfc3161TimestampRequest` | Signatures entirely on BCL |
-| `IsAotCompatible` | All four runtime packages |
+| `IsAotCompatible` | All five runtime packages |
 
 ## What Compliance Is Based On
 

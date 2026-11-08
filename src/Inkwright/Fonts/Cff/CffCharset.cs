@@ -82,24 +82,24 @@ internal sealed class CffCharset
             // Formats one and two list ranges: a first name, then how many follow it in sequence.
             case 1:
             case 2:
-            {
-                int size = format == 1 ? 3 : 4;
-
-                while (glyph < glyphs && position + size <= data.Length)
                 {
-                    int first = BinaryPrimitives.ReadUInt16BigEndian(data[position..]);
-                    int left = format == 1
-                        ? data[position + 2]
-                        : BinaryPrimitives.ReadUInt16BigEndian(data[(position + 2)..]);
+                    int size = format == 1 ? 3 : 4;
 
-                    for (int i = 0; i <= left && glyph < glyphs; i++)
-                        identifiers[glyph++] = first + i;
+                    while (glyph < glyphs && position + size <= data.Length)
+                    {
+                        int first = BinaryPrimitives.ReadUInt16BigEndian(data[position..]);
+                        int left = format == 1
+                            ? data[position + 2]
+                            : BinaryPrimitives.ReadUInt16BigEndian(data[(position + 2)..]);
 
-                    position += size;
+                        for (int i = 0; i <= left && glyph < glyphs; i++)
+                            identifiers[glyph++] = first + i;
+
+                        position += size;
+                    }
+
+                    break;
                 }
-
-                break;
-            }
 
             default:
                 return null;

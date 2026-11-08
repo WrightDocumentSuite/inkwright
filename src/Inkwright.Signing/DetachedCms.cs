@@ -141,21 +141,21 @@ internal static class DetachedCms
     /// </summary>
     private static (string Oid, bool NullParameters) SignatureAlgorithm(
         X509Certificate2 certificate, HashAlgorithmName hash) => certificate.PublicKey.Oid.Value switch
-    {
-        PdfSignatureAlgorithms.Ed25519Oid => (PdfSignatureAlgorithms.Ed25519Oid, false),
-        PdfSignatureAlgorithms.Ed448Oid => (PdfSignatureAlgorithms.Ed448Oid, false),
-        "1.2.840.10045.2.1" => (hash.Name switch
         {
-            "SHA384" => "1.2.840.10045.4.3.3",
-            "SHA512" => "1.2.840.10045.4.3.4",
-            "SHA3-256" => "2.16.840.1.101.3.4.3.10",
-            "SHA3-384" => "2.16.840.1.101.3.4.3.11",
-            "SHA3-512" => "2.16.840.1.101.3.4.3.12",
-            "SHAKE256" => "1.3.6.1.5.5.7.6.33",
-            _ => "1.2.840.10045.4.3.2",
-        }, false),
-        _ => (RsaEncryptionOid, true),
-    };
+            PdfSignatureAlgorithms.Ed25519Oid => (PdfSignatureAlgorithms.Ed25519Oid, false),
+            PdfSignatureAlgorithms.Ed448Oid => (PdfSignatureAlgorithms.Ed448Oid, false),
+            "1.2.840.10045.2.1" => (hash.Name switch
+            {
+                "SHA384" => "1.2.840.10045.4.3.3",
+                "SHA512" => "1.2.840.10045.4.3.4",
+                "SHA3-256" => "2.16.840.1.101.3.4.3.10",
+                "SHA3-384" => "2.16.840.1.101.3.4.3.11",
+                "SHA3-512" => "2.16.840.1.101.3.4.3.12",
+                "SHAKE256" => "1.3.6.1.5.5.7.6.33",
+                _ => "1.2.840.10045.4.3.2",
+            }, false),
+            _ => (RsaEncryptionOid, true),
+        };
 
     private static void WriteAlgorithm(AsnWriter writer, string oid, bool writeNull)
     {

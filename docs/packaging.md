@@ -12,32 +12,46 @@ mirrored and committed there. `RepositoryUrl` names that public repository, and 
 current Git commit in every nuspec. Packing directly from the private monorepo would therefore
 publish a commit hash that cannot be resolved in the repository named by the package.
 
+The mirror must preserve top-level dotfiles and directories, especially `.github`,
+`.gitattributes`, `SECURITY.md`, and every project-level `packages.lock.json`. GitHub only discovers
+`.github/workflows` at the public repository root; the same directory is intentionally inert while
+it is nested inside the private monorepo. After mirroring, compare the public tree with the subtree
+and check `git status` before treating its CI result as release evidence.
+
 From the clean public `inkwright` root:
 
 ```bash
-VERSION=0.1.3
+VERSION=0.1.4
+BASELINE_VERSION=0.1.3
 PACKAGE_DIR="artifacts/packages/$VERSION"
 PUBLIC_SHA=$(git rev-parse HEAD)
 export NUGET_PACKAGES="$PWD/artifacts/nuget-cache/$VERSION"
-dotnet restore Inkwright.slnx \
-  -p:EnablePackageValidation=true \
-  -p:PackageValidationBaselineVersion=0.1.2
-dotnet test Inkwright.slnx -c Release --no-restore
-dotnet pack Inkwright.slnx -c Release --no-restore \
+dotnet restore Inkwright.slnx --locked-mode \
   -p:Version="$VERSION" \
   -p:EnablePackageValidation=true \
-  -p:PackageValidationBaselineVersion=0.1.2 \
+  -p:PackageValidationBaselineVersion="$BASELINE_VERSION"
+dotnet test Inkwright.slnx -c Release --no-restore -p:Version="$VERSION"
+dotnet pack Inkwright.slnx -c Release --no-restore \
+  -p:Version="$VERSION" \
+  -p:ContinuousIntegrationBuild=true \
+  -p:EnablePackageValidation=true \
+  -p:PackageValidationBaselineVersion="$BASELINE_VERSION" \
   --output "$PACKAGE_DIR"
 ```
 
-The validation properties must also be present during restore: they add the five 0.1.2 packages as
+The validation properties must also be present during restore: they add the five 0.1.3 packages as
 `PackageDownload` baselines. Passing them only to `dotnet pack --no-restore` leaves no baseline
 `.nupkg` for the API compatibility task.
 
+`Directory.Build.props` creates one `packages.lock.json` per project. Release and CI restores use
+`--locked-mode`, so a package graph or content-hash change fails instead of silently rewriting those
+files. When a dependency is intentionally changed, run an ordinary restore locally, review every
+lock-file diff, commit it with the dependency change, and then repeat the locked restore.
+
 The `Version` parameter is intentionally set on the release command: the same commit can be built as prerelease (`0.2.0-preview.1`) or stable without editing the project. If the parameter is omitted, the value from `Directory.Build.props` is used.
 
-Versions `0.1.0` through `0.1.2` have already been published and cannot be replaced. The examples
-use `0.1.3`; query the NuGet flat-container index immediately before a later release and raise
+Versions `0.1.0` through `0.1.3` have already been published and cannot be replaced. The examples
+use `0.1.4`; query the NuGet flat-container index immediately before a later release and raise
 `VERSION` when needed rather than relying on `--skip-duplicate`, which would silently leave the old
 package on nuget.org.
 
@@ -47,6 +61,30 @@ check `.nuspec`, `README.md`, `NOTICE`, `lib/net10.0`, dependencies, and for `In
 `analyzers/dotnet/cs/Inkwright.Forms.Generator.dll`; `Inkwright.Cjk` must also contain
 `LICENSE-ADOBE-CMAP.txt`. Every nuspec must contain the public repository URL and
 `repository.commit == $PUBLIC_SHA`.
+
+Run the repository gates against that exact directory rather than inspecting an older wildcard:
+
+```powershell
+$VERSION = '0.1.4'
+$PACKAGE_DIR = "artifacts/packages/$VERSION"
+$PUBLIC_SHA = (git rev-parse HEAD).Trim()
+./.github/scripts/Test-Packages.ps1 `
+  -PackageDirectory $PACKAGE_DIR `
+  -Version $VERSION `
+  -RepositoryCommit $PUBLIC_SHA
+./.github/scripts/Run-PackageAotSmoke.ps1 `
+  -PackageDirectory $PACKAGE_DIR `
+  -PackageVersion $VERSION `
+  -RuntimeIdentifier win-x64 `
+  -WorkingDirectory (Join-Path $env:TEMP "inkwright-aot-smoke-$VERSION")
+```
+
+The first command verifies metadata, exact dependency versions, runtime assemblies and XML docs,
+the Forms analyzer, the CJK licence, and the matching PDB in every symbol package. The second builds
+an external Native AOT consumer from an isolated cache, then signs and verifies a PDF through the
+packed Signing assembly. Its working directory must stay outside the repository so central package
+management and other repository build settings cannot make the consumer test pass accidentally.
+Public CI additionally runs `sourcelink test` from the mirrored commit.
 
 ## Verify Installation Locally
 
@@ -60,7 +98,7 @@ takes it from there and no longer looks at the local feed. A rebuilt package wit
 can sit untouched while the smoke test verifies yesterday's bytes.
 
 ```bash
-VERSION=0.1.3
+VERSION=0.1.4
 PUBLIC_ROOT="/absolute/path/to/public/inkwright"
 PACKAGE_DIR="$PUBLIC_ROOT/artifacts/packages/$VERSION"
 SMOKE_ROOT=$(mktemp -d)
@@ -107,7 +145,7 @@ before the first push; none may already list the version. Push dependencies in o
 each prerequisite is indexed before pushing its dependants:
 
 ```bash
-VERSION=0.1.3
+VERSION=0.1.4
 PACKAGE_DIR="artifacts/packages/$VERSION"
 SOURCE=https://api.nuget.org/v3/index.json
 
@@ -130,7 +168,42 @@ Do not use a wildcard or `--skip-duplicate` for a release: either can hide that 
 an already occupied version was selected. NuGet versions are immutable, and the API secret must not
 be stored in the repository or passed as an MSBuild property that ends up in logs.
 
+The `Packages` workflow deliberately creates a unique `-ci.<run>.<attempt>` prerelease, has only
+read access to repository contents, and uploads validation artifacts; it has no NuGet credential and
+contains no push step. Keep publishing separate from pull-request and branch CI. Never rename a CI
+artifact to a stable version or publish it as though it came from the clean release procedure above.
+
+## Release handoff
+
+Before the public release commit is built, move the relevant entries from `Unreleased` in
+`CHANGELOG.md` to `## $VERSION — YYYY-MM-DD`, leave a fresh empty `Unreleased` section, and review
+the diff. After all five package pushes succeed:
+
+1. Verify all five exact versions are indexed on nuget.org, their dependency links resolve, and
+   each package page reports its matching symbol package.
+2. Reinstall all five packages into a clean-cache consumer from nuget.org and repeat the behavioral
+   smoke; a local feed is no longer sufficient evidence at this point.
+3. Create an annotated `v$VERSION` tag at exactly `$PUBLIC_SHA`, verify it with
+   `git rev-parse "v$VERSION^{commit}"`, and push that tag. Do not move or reuse a release
+   tag.
+4. Create the GitHub Release from that tag and attach a SHA-256 manifest for the five `.nupkg` and
+   five `.snupkg` files. Record any indexing delay or exceptional manual step in the release notes.
+
+If package publication stops part-way, do not create the tag or GitHub Release. Resolve the partial
+NuGet state explicitly—published versions are immutable—then choose a new patch version for rebuilt
+artifacts.
+
 Packing also produces one `.snupkg` beside every ordinary package. Source Link maps its portable PDB
 to the exact public repository commit recorded in the package metadata, so publish each symbol
 package together with its matching `.nupkg`. The release check must inspect the repository URL and
-commit in both the package and PDB before either artifact is pushed.
+commit in both the package and PDB before either artifact is pushed. CI additionally requires the
+exact runtime PDB in each symbol package and runs `sourcelink test` over all five `.snupkg` files.
+
+## SDK servicing and lock files
+
+This release uses exactly .NET SDK 10.0.403 (`global.json`, roll-forward disabled).
+The SDK supplies implicit linker dependencies, so changing its servicing patch can
+invalidate a locked restore even when the explicit package references are unchanged.
+To service the SDK, update `global.json`, restore with `--force-evaluate`, review the
+lock-file diff, and repeat the locked restore, source tests, and package consumer gates.
+Commit these changes together; do not disable locked restore in CI.

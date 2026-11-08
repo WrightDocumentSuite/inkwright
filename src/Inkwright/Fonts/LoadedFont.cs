@@ -236,7 +236,12 @@ public sealed class LoadedFont
             return null;
         }
 
-        return new Lazy<CMap?>(() => CMapProvider.Load($"{registry}-{ordering}-UCS2"));
+        return new Lazy<CMap?>(() =>
+            CMapProvider.Load($"{registry}-{ordering}-UCS2") ??
+            (string.Equals(registry, "Adobe", StringComparison.Ordinal) &&
+             string.Equals(ordering, "KR", StringComparison.Ordinal)
+                ? CMapProvider.Load("Adobe-Korea1-UCS2")
+                : null));
     }
 
     private static void ReadCidWidths(PdfArray widths, Dictionary<int, double> target)

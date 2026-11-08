@@ -110,7 +110,7 @@ public class CorpusRoundTripTests
         // Keep the published snapshot reproducible while still allowing developers to point the
         // tests at a different corpus. When this exact snapshot is present, its headline numbers
         // are part of the regression contract rather than prose that can silently go stale.
-        if (SampleSize == 7807)
+        if (Corpus.IsReferenceInventory)
         {
             Assert.Equal(7800, opened);
             Assert.Equal(7555, rewritten);
@@ -213,7 +213,11 @@ public class CorpusRoundTripTests
         {
             try
             {
-                using PdfDocument document = PdfDocument.Load(File.ReadAllBytes(path), Corpus.ReadOptions);
+                // This representative lazy-content sweep deliberately keeps production defaults;
+                // the full compatibility round-trip above is the separate unbounded baseline.
+                using PdfDocument document = PdfDocument.Load(
+                    File.ReadAllBytes(path),
+                    Corpus.BoundedReadOptions);
                 if (document.WasEncrypted)
                     continue;
 
@@ -240,7 +244,7 @@ public class CorpusRoundTripTests
         Assert.True(operations > 100_000, $"Only {operations} operations were parsed.");
         Assert.True(failures.Count == 0, Summarize(failures, pages));
 
-        if (SampleSize == 7807)
+        if (Corpus.IsReferenceInventory)
         {
             Assert.Equal(694, pages);
             Assert.Equal(386535, operations);

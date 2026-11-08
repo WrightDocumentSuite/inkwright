@@ -21,6 +21,7 @@ public class TimestampTests
         byte[] stamped = PdfTimestamper.Timestamp(file, new PdfTimestampOptions { Client = authority });
 
         Assert.Equal(1, authority.Requests);
+        Assert.Equal(16, authority.LastNonce?.Length);
         Assert.True(stamped.AsSpan(0, file.Length).SequenceEqual(file),
             "A timestamp must append, never rewrite.");
 
@@ -158,5 +159,16 @@ public class TimestampTests
     {
         Assert.Throws<InvalidOperationException>(() =>
             PdfTimestamper.Timestamp(TestDocuments.Build(), new PdfTimestampOptions()));
+    }
+
+    [Fact]
+    public void RejectsAResponseThatDoesNotEchoTheRequestNonce()
+    {
+        using var authority = new TestTimestampAuthority(omitNonce: true);
+
+        Assert.Throws<CryptographicException>(() =>
+            PdfTimestamper.Timestamp(
+                TestDocuments.Build(),
+                new PdfTimestampOptions { Client = authority }));
     }
 }

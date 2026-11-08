@@ -45,16 +45,16 @@ public interface IPdfFormSchema<TSelf>
     where TSelf : IPdfFormSchema<TSelf>
 {
     /// <summary>The field names this type maps to.</summary>
-    static abstract IReadOnlyList<string> FieldNames { get; }
+    public abstract static IReadOnlyList<string> FieldNames { get; }
 
     /// <summary>Writes the values of an instance into a form.</summary>
     /// <param name="form">The form to fill in.</param>
     /// <param name="value">The instance to read from.</param>
-    static abstract void Fill(PdfForm form, TSelf value);
+    public abstract static void Fill(PdfForm form, TSelf value);
 
     /// <summary>Reads an instance out of a filled form.</summary>
     /// <param name="form">The form to read.</param>
-    static abstract TSelf Read(PdfForm form);
+    public abstract static TSelf Read(PdfForm form);
 }
 
 /// <summary>Typed access to a form, backed by the generated schema.</summary>

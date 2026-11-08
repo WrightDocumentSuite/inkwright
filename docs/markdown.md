@@ -68,7 +68,8 @@ External URIs are accepted only for `http`, `https`, `mailto`, `ftp`, and relati
 Executable and unknown absolute schemes, for example `javascript:`, do not become links and
 are recorded as `UnsafeLinkSkipped`. HTML character references are decoded before checking, so
 `javascript&#x3a;` does not bypass the allowlist; relative URIs are resolved via Catalog `/URI /Base`.
-Internal PDF destinations remain plain text for now:
+Internal PDF destinations (`/Dest` or `/A << /S /GoTo ... >>`) remain plain text and are reported
+as `StructureApproximated` (`Internal link`):
 a PDF page address does not yield a stable anchor in Markdown.
 
 ## Untagged PDFs

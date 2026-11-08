@@ -832,6 +832,7 @@ public sealed partial class PdfReader : IPdfStreamPayloadReader
 
     private PdfDictionary? ReadSection(long offset, out bool isStream)
     {
+        _resourceBudget?.ConsumeCrossReferenceSection();
         isStream = false;
         _protectedSectionEnd = -1;
         _protectedSectionObjectNumber = -1;
@@ -938,6 +939,8 @@ public sealed partial class PdfReader : IPdfStreamPayloadReader
             }
 
             bool strict = _options.StreamDecodePolicy is not null;
+            if (!strict && count > 0)
+                _resourceBudget?.ConsumeCrossReferenceEntries(count);
             if (strict && count > 0)
             {
                 // Charge every declared row before walking it. Free rows consume parser time just
@@ -2977,12 +2980,28 @@ public sealed partial class PdfReader : IPdfStreamPayloadReader
             ranges.Add((0, (int)dictionary.GetInteger(PdfNames.Size, data.Length / rowLength)));
         }
 
+        long expectedRows = 0;
+        foreach ((_, int count) in ranges)
+        {
+            if (count > 0)
+                expectedRows += count;
+        }
+
+        if (!strict && _resourceBudget is not null && expectedRows > 0)
+        {
+            if (expectedRows > int.MaxValue)
+            {
+                throw new PdfResourceLimitException(
+                    nameof(PdfResourceLimits.MaxCrossReferenceEntries),
+                    _resourceBudget.Limits.MaxCrossReferenceEntries,
+                    expectedRows);
+            }
+
+            _resourceBudget.ConsumeCrossReferenceEntries((int)expectedRows);
+        }
+
         if (strict)
         {
-            long expectedRows = 0;
-            foreach ((_, int count) in ranges)
-                expectedRows += count;
-
             if (expectedRows > int.MaxValue || expectedRows * rowLength != data.Length)
             {
                 throw new PdfFormatException(
@@ -3043,47 +3062,47 @@ public sealed partial class PdfReader : IPdfStreamPayloadReader
                         break;
 
                     case 1:
-                    {
-                        if (strict &&
-                            (field2 < 0 || field2 >= _data.Length ||
-                             field3 is < 0 or > ushort.MaxValue))
                         {
-                            throw new PdfFormatException(
-                                "A protected cross-reference stream has an out-of-range " +
-                                "object offset or generation.");
-                        }
+                            if (strict &&
+                                (field2 < 0 || field2 >= _data.Length ||
+                                 field3 is < 0 or > ushort.MaxValue))
+                            {
+                                throw new PdfFormatException(
+                                    "A protected cross-reference stream has an out-of-range " +
+                                    "object offset or generation.");
+                            }
 
-                        if (strict && number == id.Number &&
-                            field2 == offset && field3 == id.Generation)
-                        {
-                            hasSelfEntry = true;
-                        }
+                            if (strict && number == id.Number &&
+                                field2 == offset && field3 == id.Generation)
+                            {
+                                hasSelfEntry = true;
+                            }
 
-                        XrefEntry normalEntry = XrefEntry.Normal(field2, (int)field3);
-                        bool normalIsEffective = number > 0 &&
-                            TryAddEntry(number, normalEntry, chargePolicy: !strict);
-                        JournalProtectedXrefRow(number, normalEntry, normalIsEffective);
-                        break;
-                    }
+                            XrefEntry normalEntry = XrefEntry.Normal(field2, (int)field3);
+                            bool normalIsEffective = number > 0 &&
+                                TryAddEntry(number, normalEntry, chargePolicy: !strict);
+                            JournalProtectedXrefRow(number, normalEntry, normalIsEffective);
+                            break;
+                        }
 
                     case 2:
-                    {
-                        if (strict &&
-                            (field2 is < 1 or > int.MaxValue ||
-                             field3 is < 0 or > int.MaxValue))
                         {
-                            throw new PdfFormatException(
-                                "A protected cross-reference stream has an out-of-range " +
-                                "object-stream number or index.");
-                        }
+                            if (strict &&
+                                (field2 is < 1 or > int.MaxValue ||
+                                 field3 is < 0 or > int.MaxValue))
+                            {
+                                throw new PdfFormatException(
+                                    "A protected cross-reference stream has an out-of-range " +
+                                    "object-stream number or index.");
+                            }
 
-                        XrefEntry compressedEntry =
-                            XrefEntry.Compressed((int)field2, (int)field3);
-                        bool compressedIsEffective = number > 0 &&
-                            TryAddEntry(number, compressedEntry, chargePolicy: !strict);
-                        JournalProtectedXrefRow(number, compressedEntry, compressedIsEffective);
-                        break;
-                    }
+                            XrefEntry compressedEntry =
+                                XrefEntry.Compressed((int)field2, (int)field3);
+                            bool compressedIsEffective = number > 0 &&
+                                TryAddEntry(number, compressedEntry, chargePolicy: !strict);
+                            JournalProtectedXrefRow(number, compressedEntry, compressedIsEffective);
+                            break;
+                        }
 
                     default:
                         // ISO 32000 reserves future entry types and requires readers to treat an
@@ -3182,7 +3201,7 @@ public sealed partial class PdfReader : IPdfStreamPayloadReader
         _entries.Clear();
 
         foreach ((int number, long offset) in _scannedOffsets)
-            _entries[number] = XrefEntry.Normal(offset, 0);
+            TryAddEntry(number, XrefEntry.Normal(offset, 0));
 
         // Objects hidden inside object streams are invisible to a byte scan; index them explicitly.
         foreach (int number in _scannedOffsets.Keys.ToArray())
@@ -3198,8 +3217,8 @@ public sealed partial class PdfReader : IPdfStreamPayloadReader
             for (int i = 0; i < index.Numbers.Length; i++)
             {
                 int contained = index.Numbers[i];
-                if (contained > 0 && !_entries.ContainsKey(contained))
-                    _entries[contained] = XrefEntry.Compressed(number, i);
+                if (contained > 0)
+                    TryAddEntry(contained, XrefEntry.Compressed(number, i));
             }
         }
 
@@ -3280,6 +3299,8 @@ public sealed partial class PdfReader : IPdfStreamPayloadReader
             if (!TryParseAsciiInt(span[numberStart..numberEnd], out int number) || number <= 0)
                 continue;
 
+            if (!found.ContainsKey(number))
+                _resourceBudget?.EnsureObjectCapacity(found.Count);
             found[number] = numberStart;
         }
 
@@ -3317,7 +3338,10 @@ public sealed partial class PdfReader : IPdfStreamPayloadReader
             }
 
             entry = XrefEntry.Normal(scanned, 0);
-            _entries[number] = entry;
+            if (hasEntry)
+                _entries[number] = entry;
+            else
+                TryAddEntry(number, entry);
         }
 
         return entry.Type switch
@@ -3597,6 +3621,12 @@ public sealed partial class PdfReader : IPdfStreamPayloadReader
 
         int count = (int)declaredCount;
         int first = (int)declaredFirst;
+
+        // Request limits are fail-closed even in the compatibility reader. Charge the declaration
+        // before decoding or allocating its index arrays; recovery warnings must not hide an
+        // exhausted budget.
+        _resourceBudget?.EnsureObjectCapacity(0, count);
+        _resourceBudget?.ConsumeStructuralEntries(count);
         ReadOnlyMemory<byte> data = stream.Decode();
 
         if (count <= 0 || first < 0 || first > data.Length)
@@ -3607,7 +3637,9 @@ public sealed partial class PdfReader : IPdfStreamPayloadReader
             return null;
         }
 
-        int structuralLimit = _options.StreamDecodePolicy?.MaxStructuralEntries ?? int.MaxValue;
+        int structuralLimit = Math.Min(
+            _options.StreamDecodePolicy?.MaxStructuralEntries ?? int.MaxValue,
+            _resourceBudget?.Limits.MaxStructuralEntries ?? int.MaxValue);
         if (count > structuralLimit || count > ((long)first + 1) / 4)
         {
             string message =
@@ -3703,6 +3735,7 @@ public sealed partial class PdfReader : IPdfStreamPayloadReader
         if (number <= 0 || _entries.ContainsKey(number))
             return false;
 
+        _resourceBudget?.EnsureObjectCapacity(_entries.Count);
         if (chargePolicy)
             _options.StreamDecodePolicy?.ConsumeStructuralEntries(1);
 
@@ -3962,34 +3995,34 @@ public sealed partial class PdfReader : IPdfStreamPayloadReader
                 return PdfValue.String(_security.DecryptString(id, value.AsStringBytes), value.IsHexString);
 
             case PdfValueKind.Array:
-            {
-                PdfArray array = value.AsArray!;
-                for (int i = 0; i < array.Count; i++)
-                    array[i] = DecryptStrings(array[i], id, depth + 1);
+                {
+                    PdfArray array = value.AsArray!;
+                    for (int i = 0; i < array.Count; i++)
+                        array[i] = DecryptStrings(array[i], id, depth + 1);
 
-                return value;
-            }
+                    return value;
+                }
 
             case PdfValueKind.Dictionary:
             case PdfValueKind.Stream:
-            {
-                PdfDictionary dictionary = value.AsDictionary!;
-
-                // The signed blob was never encrypted (§7.6.2), so decrypting it would turn a valid
-                // signature into noise that no verifier can even parse.
-                bool signature = IsSignature(dictionary);
-
-                foreach (PdfName key in dictionary.Keys.ToArray())
                 {
-                    if (signature && key == PdfNames.Contents)
-                        continue;
+                    PdfDictionary dictionary = value.AsDictionary!;
 
-                    if (dictionary.TryGetRaw(key, out PdfValue entry))
-                        dictionary.Set(key, DecryptStrings(entry, id, depth + 1));
+                    // The signed blob was never encrypted (§7.6.2), so decrypting it would turn a valid
+                    // signature into noise that no verifier can even parse.
+                    bool signature = IsSignature(dictionary);
+
+                    foreach (PdfName key in dictionary.Keys.ToArray())
+                    {
+                        if (signature && key == PdfNames.Contents)
+                            continue;
+
+                        if (dictionary.TryGetRaw(key, out PdfValue entry))
+                            dictionary.Set(key, DecryptStrings(entry, id, depth + 1));
+                    }
+
+                    return value;
                 }
-
-                return value;
-            }
 
             default:
                 return value;

@@ -5,8 +5,13 @@
     <LangVersion>latest</LangVersion>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <!-- High-signal rules are enabled explicitly in .editorconfig; legacy API-style debt is not. -->
+    <EnableNETAnalyzers>true</EnableNETAnalyzers>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <Deterministic>true</Deterministic>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+    <NuGetAuditMode>all</NuGetAuditMode>
+    <NuGetAuditLevel>moderate</NuGetAuditLevel>
     <UseArtifactsOutput>true</UseArtifactsOutput>
     <AccelerateBuildsInVisualStudio>true</AccelerateBuildsInVisualStudio>
     <InvariantGlobalization>false</InvariantGlobalization>
@@ -17,7 +22,7 @@
     <Authors>Pavel Deecalov</Authors>
     <Copyright>Copyright 2026 Pavel Deecalov</Copyright>
     <Product>Inkwright</Product>
-    <Version>0.1.3</Version>
+    <Version>0.1.4</Version>
     <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
     <PackageProjectUrl>https://github.com/WrightDocumentSuite/inkwright</PackageProjectUrl>
     <RepositoryUrl>https://github.com/WrightDocumentSuite/inkwright.git</RepositoryUrl>

@@ -142,3 +142,41 @@ public sealed class PdfFormatException : Exception
     /// <summary>The object being read when the failure happened, when there was one.</summary>
     public PdfObjectId ObjectId { get; init; }
 }
+
+/// <summary>
+/// Raised when reading or lazily decoding a PDF would exceed a limit selected by the caller.
+/// This is distinct from malformed-file recovery so callers can reject, quarantine, or retry the
+/// document with a deliberately larger budget.
+/// </summary>
+public sealed class PdfResourceLimitException : Exception
+{
+    /// <summary>Creates an exception describing the exhausted resource budget.</summary>
+    /// <param name="limitName">
+    /// The configured limit identifier that was exceeded, normally a
+    /// <see cref="IO.PdfResourceLimits"/> property name. The legacy process-wide ceiling is
+    /// reported as <c>PdfFilterLimits.MaxDecodedBytes</c>.
+    /// </param>
+    /// <param name="limit">The configured maximum.</param>
+    /// <param name="observed">The amount requested or observed at the boundary.</param>
+    public PdfResourceLimitException(string limitName, long limit, long observed)
+        : base($"The PDF exceeded {limitName}: limit {limit}, observed or requested {observed}.")
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(limitName);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(limit);
+        LimitName = limitName;
+        Limit = limit;
+        Observed = observed;
+    }
+
+    /// <summary>
+    /// The configured limit identifier that was exceeded, such as a
+    /// <see cref="IO.PdfResourceLimits"/> property or <c>PdfFilterLimits.MaxDecodedBytes</c>.
+    /// </summary>
+    public string LimitName { get; }
+
+    /// <summary>The configured maximum.</summary>
+    public long Limit { get; }
+
+    /// <summary>The amount requested or observed at the boundary.</summary>
+    public long Observed { get; }
+}

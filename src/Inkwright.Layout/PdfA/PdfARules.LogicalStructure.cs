@@ -5,7 +5,7 @@ namespace Inkwright.Layout;
 internal static partial class PdfARules
 {
     /// <summary>The structure types ISO 32000-1 defines in 14.8.4; anything else needs a role map.</summary>
-    private static readonly string[] _standardStructureTypes =
+    private static readonly string[] StandardStructureTypes =
     [
         "Document", "Part", "Art", "Sect", "Div", "BlockQuote", "Caption", "TOC", "TOCI", "Index",
         "NonStruct", "Private", "P", "H", "H1", "H2", "H3", "H4", "H5", "H6", "L", "LI", "Lbl",
@@ -82,7 +82,7 @@ internal static partial class PdfARules
 
     private static bool Resolves(string type, PdfDictionary roles, int depth)
     {
-        if (_standardStructureTypes.Contains(type, StringComparer.Ordinal))
+        if (StandardStructureTypes.Contains(type, StringComparer.Ordinal))
             return true;
 
         if (depth > 16 || roles.GetName(PdfName.Get(type)) is not { } mapped)

@@ -42,7 +42,7 @@ public sealed class PdfDestination
     public static PdfDestination XyzLocation(PdfPage page, double? left = null, double? top = null, double? zoom = null)
     {
         ArgumentNullException.ThrowIfNull(page);
-        return new PdfDestination(page, default,"XYZ", [left, top, zoom]);
+        return new PdfDestination(page, default, "XYZ", [left, top, zoom]);
     }
 
     /// <summary>Fits the whole page in the window (<c>/Fit</c>).</summary>
@@ -50,7 +50,7 @@ public sealed class PdfDestination
     public static PdfDestination FitPage(PdfPage page)
     {
         ArgumentNullException.ThrowIfNull(page);
-        return new PdfDestination(page, default,"Fit", []);
+        return new PdfDestination(page, default, "Fit", []);
     }
 
     /// <summary>Fits the page width, with a given row at the top (<c>/FitH</c>).</summary>
@@ -59,7 +59,7 @@ public sealed class PdfDestination
     public static PdfDestination FitWidth(PdfPage page, double? top = null)
     {
         ArgumentNullException.ThrowIfNull(page);
-        return new PdfDestination(page, default,"FitH", [top]);
+        return new PdfDestination(page, default, "FitH", [top]);
     }
 
     /// <summary>Fits the page height, with a given column at the left (<c>/FitV</c>).</summary>
@@ -68,7 +68,7 @@ public sealed class PdfDestination
     public static PdfDestination FitHeight(PdfPage page, double? left = null)
     {
         ArgumentNullException.ThrowIfNull(page);
-        return new PdfDestination(page, default,"FitV", [left]);
+        return new PdfDestination(page, default, "FitV", [left]);
     }
 
     /// <summary>

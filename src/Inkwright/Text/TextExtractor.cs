@@ -326,16 +326,16 @@ public static class TextExtractor
                         break;
 
                     case PdfOperator.CurveToY when operands.Length >= 4:
-                    {
-                        PdfPoint end = _state.Transform.Transform(new PdfPoint(
-                            operands[2].AsNumber,
-                            operands[3].AsNumber));
-                        _path.CurveTo(
-                            _state.Transform.Transform(new PdfPoint(operands[0].AsNumber, operands[1].AsNumber)),
-                            end,
-                            end);
-                        break;
-                    }
+                        {
+                            PdfPoint end = _state.Transform.Transform(new PdfPoint(
+                                operands[2].AsNumber,
+                                operands[3].AsNumber));
+                            _path.CurveTo(
+                                _state.Transform.Transform(new PdfPoint(operands[0].AsNumber, operands[1].AsNumber)),
+                                end,
+                                end);
+                            break;
+                        }
 
                     case PdfOperator.ClosePath:
                         _path.Close();
@@ -382,16 +382,16 @@ public static class TextExtractor
                         break;
 
                     case PdfOperator.SetFont when operands.Length >= 2:
-                    {
-                        LoadedFont? font = ResolveFont(resources, operands[0].AsName);
-                        _state = _state with
                         {
-                            Font = font,
-                            FontName = font?.BaseFont ?? operands[0].AsName?.Value ?? string.Empty,
-                            FontSize = operands[1].AsNumber,
-                        };
-                        break;
-                    }
+                            LoadedFont? font = ResolveFont(resources, operands[0].AsName);
+                            _state = _state with
+                            {
+                                Font = font,
+                                FontName = font?.BaseFont ?? operands[0].AsName?.Value ?? string.Empty,
+                                FontSize = operands[1].AsNumber,
+                            };
+                            break;
+                        }
 
                     case PdfOperator.SetCharSpacing when operands.Length >= 1:
                         _state = _state with { CharSpacing = operands[0].AsNumber };

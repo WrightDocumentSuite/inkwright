@@ -13,26 +13,62 @@ namespace Inkwright.Signing;
 /// </summary>
 internal static class CmsBuilder
 {
+    private const int TimestampNonceSize = 16;
     private const string SigningCertificateV2Oid = "1.2.840.113549.1.9.16.2.47";
     private const string SignatureTimestampOid = "1.2.840.113549.1.9.16.2.14";
 
     internal static byte[] Build(ReadOnlyMemory<byte> content, PdfSignatureOptions options, IExternalSigner signer)
     {
+        if ((signer is not CertificateSigner || options.HashAlgorithm == PdfSignatureAlgorithms.Shake256) &&
+            options.Level != PdfSignatureLevel.Timestamped)
+        {
+            return DetachedCms.Build(content.Span, options, signer);
+        }
+
+        SignedCms signedData = BuildSignedData(content, options, signer);
+
+        if (options.Level == PdfSignatureLevel.Timestamped)
+            AddTimestamp(signedData, options);
+
+        return signedData.Encode();
+    }
+
+    internal static async ValueTask<byte[]> BuildAsync(
+        ReadOnlyMemory<byte> content,
+        PdfSignatureOptions options,
+        IExternalSigner signer,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if ((signer is not CertificateSigner || options.HashAlgorithm == PdfSignatureAlgorithms.Shake256) &&
+            options.Level != PdfSignatureLevel.Timestamped)
+        {
+            return DetachedCms.Build(content.Span, options, signer);
+        }
+
+        SignedCms signedData = BuildSignedData(content, options, signer);
+
+        if (options.Level == PdfSignatureLevel.Timestamped)
+            await AddTimestampAsync(signedData, options, cancellationToken).ConfigureAwait(false);
+
+        return signedData.Encode();
+    }
+
+    private static SignedCms BuildSignedData(
+        ReadOnlyMemory<byte> content,
+        PdfSignatureOptions options,
+        IExternalSigner signer)
+    {
         // A key the platform can use goes through SignedCms; anything else is encoded here, because
-        // an external signer only ever answers with a signature over a digest.
+        // an external signer only ever answers with a signature over a digest. Adding an unsigned
+        // timestamp attribute needs no private key, so the BCL can reopen that manually encoded CMS.
         if (signer is not CertificateSigner)
         {
             byte[] encoded = DetachedCms.Build(content.Span, options, signer);
-            if (options.Level != PdfSignatureLevel.Timestamped)
-                return encoded;
-
-            // Adding an unsigned attribute does not need the signing key. Decode the manually
-            // produced detached CMS with its original content so the BCL can build the RFC 3161
-            // request from the existing signature value, then append the token in-place.
             var externalSignedData = new SignedCms(new ContentInfo(content.ToArray()), detached: true);
             externalSignedData.Decode(encoded);
-            AddTimestamp(externalSignedData, options);
-            return externalSignedData.Encode();
+            return externalSignedData;
         }
 
         var signedData = new SignedCms(new ContentInfo(content.ToArray()), detached: true);
@@ -53,11 +89,7 @@ internal static class CmsBuilder
         cmsSigner.SignedAttributes.Add(BuildSigningCertificateV2(signer.Certificate, options.HashAlgorithm));
 
         signedData.ComputeSignature(cmsSigner, silent: true);
-
-        if (options.Level == PdfSignatureLevel.Timestamped)
-            AddTimestamp(signedData, options);
-
-        return signedData.Encode();
+        return signedData;
     }
 
     private static AsnEncodedData BuildSigningCertificateV2(X509Certificate2 certificate, HashAlgorithmName hash)
@@ -91,10 +123,33 @@ internal static class CmsBuilder
         ITimestampAuthority client = ResolveAuthority(options.TimestampClient, options.TimestampAuthority);
 
         Rfc3161TimestampRequest request = Rfc3161TimestampRequest.CreateFromSignerInfo(
-            signedData.SignerInfos[0], options.HashAlgorithm, requestSignerCertificates: true);
+            signedData.SignerInfos[0],
+            options.HashAlgorithm,
+            nonce: CreateTimestampNonce(),
+            requestSignerCertificates: true);
 
         byte[] response = client.Send(request.Encode());
-        Rfc3161TimestampToken token = request.ProcessResponse(response, out _);
+        Rfc3161TimestampToken token = ValidateTimestampResponse(request, response);
+
+        signedData.SignerInfos[0].AddUnsignedAttribute(
+            new AsnEncodedData(new Oid(SignatureTimestampOid), token.AsSignedCms().Encode()));
+    }
+
+    private static async ValueTask AddTimestampAsync(
+        SignedCms signedData,
+        PdfSignatureOptions options,
+        CancellationToken cancellationToken)
+    {
+        ITimestampAuthority client = ResolveAuthority(options.TimestampClient, options.TimestampAuthority);
+
+        Rfc3161TimestampRequest request = Rfc3161TimestampRequest.CreateFromSignerInfo(
+            signedData.SignerInfos[0],
+            options.HashAlgorithm,
+            nonce: CreateTimestampNonce(),
+            requestSignerCertificates: true);
+
+        byte[] response = await client.SendAsync(request.Encode(), cancellationToken).ConfigureAwait(false);
+        Rfc3161TimestampToken token = ValidateTimestampResponse(request, response);
 
         signedData.SignerInfos[0].AddUnsignedAttribute(
             new AsnEncodedData(new Oid(SignatureTimestampOid), token.AsSignedCms().Encode()));
@@ -110,6 +165,39 @@ internal static class CmsBuilder
             throw new InvalidOperationException("A timestamp needs an authority to ask.");
 
         return new HttpTimestampAuthority(authority);
+    }
+
+    /// <summary>
+    /// Creates a positive, fixed-width RFC 3161 INTEGER. Keeping the leading bit clear prevents
+    /// DER from adding a sign byte, while setting the next bit keeps all 16 bytes significant.
+    /// </summary>
+    internal static byte[] CreateTimestampNonce()
+    {
+        byte[] nonce = RandomNumberGenerator.GetBytes(TimestampNonceSize);
+        nonce[0] = (byte)((nonce[0] & 0x3F) | 0x40);
+        return nonce;
+    }
+
+    /// <summary>
+    /// Accepts exactly one complete response and verifies the timestamp token's CMS signature.
+    /// Chain trust and revocation remain application policy; this check proves only that the token
+    /// was not malformed or altered after the authority signed it.
+    /// </summary>
+    internal static Rfc3161TimestampToken ValidateTimestampResponse(
+        Rfc3161TimestampRequest request,
+        ReadOnlyMemory<byte> response)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        Rfc3161TimestampToken token = request.ProcessResponse(response, out int bytesConsumed);
+        if (bytesConsumed != response.Length)
+        {
+            throw new CryptographicException(
+                $"The timestamp response contains {response.Length - bytesConsumed} trailing byte(s).");
+        }
+
+        token.AsSignedCms().CheckSignature(verifySignatureOnly: true);
+        return token;
     }
 
     /// <summary>

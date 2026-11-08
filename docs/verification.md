@@ -56,17 +56,85 @@ The focused CMS-padding regression first reproduced the intermittent failure aft
 runs. After framing `/Contents` by its ASN.1 length instead of trimming zero bytes, the forced-zero
 test passed and the formerly intermittent signing scenario passed 10 of 10 independent repeats.
 
+### 0.1.4 hardening candidate
+
+The complete local candidate was rechecked on 16 August 2026 on Windows Server 2022 with .NET
+10.0.11 and SDK 10.0.400. Restore ran in locked mode with package validation enabled against the
+published 0.1.3 baseline; the Release build completed with zero warnings and zero errors. The test
+run required the content-addressed reference corpus described below rather than accepting skips.
+
+| Project | Passed | Skipped | Failed |
+| --- | ---: | ---: | ---: |
+| Core | 743 | 0 | 0 |
+| Layout | 531 | 0 | 0 |
+| Forms | 78 | 0 | 0 |
+| Signing | 82 | 3 | 0 |
+| CJK | 12 | 0 | 0 |
+| **Total** | **1,446** | **3** | **0** |
+
+The three Signing skips remain the documented cryptographic platform capabilities. All corpus and
+external JBIG2 fixture tests ran, including the fixed-metric assertions tied to the reference tree
+SHA-256. All five committed fuzz seeds also replayed successfully.
+
+## Continuous Integration
+
+The public repository runs the ordinary suite on Windows and Linux, replays committed fuzz seeds,
+runs a scheduled bounded fuzz campaign, and separately packs the five NuGet packages. All repository
+restores use committed lock files in locked mode. Package CI validates the public API against the
+latest published baseline, checks the nuspec dependency graph and repository commit, tests Source
+Link for every symbol package, and compiles and runs an external Native AOT consumer from an isolated
+NuGet cache. That consumer signs and verifies a PDF, so the smoke covers the packaged CMS
+implementation rather than only loading the Signing assembly. These jobs upload prerelease artifacts
+only and never publish to NuGet.
+
+These paths are rooted at the public `inkwright` checkout. The project lives below the Git root in
+the private monorepo, where `Inkwright/.github/workflows` is not a runnable workflow location; the
+mirror must therefore carry `.github`, `.gitattributes`, the security policy, and lock files into the
+public repository root before CI results are considered authoritative.
+
+The private corpus job never runs for pull requests. It sets
+`INKWRIGHT_REQUIRE_REFERENCE_CORPUS=1` and fails unless the mounted inventory has the published
+content-addressed tree identity; matching only the file count and aggregate size is insufficient.
+Partial inventories remain useful only for local developer runs. Its
+self-hosted runner is a dedicated security
+boundary: use a repository-scoped, current runner on an ephemeral or otherwise isolated host, keep
+unrelated credentials and workloads off it, and mount the corpus read-only when the runner platform
+allows that. A runner label only routes a job; it does not sandbox repository code. The job accepts
+only the named PdfPig, iText, pdf.js, and XMP Toolkit corpus roots, requires all four, and does not
+upload the source documents.
+
 ## Reference Corpus
 
-The reference PDFs are intentionally not part of a public clone. `Inkwright.Forms.Tests` first
-uses the directory named by `INKWRIGHT_CORPUS`; when the variable is absent, it walks upward from
-the test output looking for a shared directory that contains unpacked `PdfPig-*` or
-`itext-dotnet-*` trees. Point the variable at that shared parent directory when the corpus lives
-elsewhere. If neither source exists, the real-form oracle reports an actionable xUnit skip instead
-of failing an otherwise clean public checkout.
+The reference PDFs are intentionally not part of a public clone. `INKWRIGHT_CORPUS` may name the
+common parent of the four allowlisted roots below, or one named root for a partial local run. When
+the variable is absent, automatic discovery looks for those same known
+`PdfPig-0.1.15`, `itext-dotnet-9.7.0`, `pdf.js-6.1.200`, and `XMP-Toolkit-SDK-main` directories beside
+the checkout. Discovery never leaves that allowlist, even for an explicitly configured parent. If
+no source exists, the real-file oracles report an actionable xUnit skip instead of failing an
+otherwise clean public checkout.
 
-The corpus inventory is 7,807 PDF files totalling 918,216,253 bytes. The full read/rewrite check at
-the baseline produced:
+The corpus inventory is the following exact four-root union:
+
+| Root | PDFs | Bytes |
+| --- | ---: | ---: |
+| `PdfPig-0.1.15` | 216 | 226,509,093 |
+| `itext-dotnet-9.7.0` | 6,613 | 561,243,936 |
+| `pdf.js-6.1.200` | 966 | 125,282,013 |
+| `XMP-Toolkit-SDK-main` | 12 | 5,181,211 |
+| **Total** | **7,807** | **918,216,253** |
+
+Its tree SHA-256 is
+`9564a7a968078c1565b82a199952384f9d2dee83be93bf43735445860261824f`. The digest is
+cross-platform and contains no source-document bytes or retained manifest. For every case-insensitive
+`.pdf` match, form a logical path from the canonical root name and relative path, replace separators
+with `/`, normalize it to Unicode NFC, and sort all logical paths with .NET ordinal ordering. Hash
+each file with SHA-256. The tree-hash input is UTF-8 without a BOM: it starts with
+`inkwright-reference-corpus-v1` plus LF, followed for every file by
+`logical-path NUL invariant-decimal-length NUL lowercase-file-sha256 LF`. The workflow and test
+harness implement this same algorithm; `.github/scripts/Get-CorpusIdentity.ps1` can be used for an
+independent mount preflight.
+
+The full read/rewrite check at the baseline produced:
 
 | Metric | Baseline |
 | --- | ---: |
@@ -97,8 +165,10 @@ following counters for future comparisons:
 The post-audit rerun reproduced every instrumented counter above exactly. In particular, all 7,800
 readable corpus files still opened, all 7,555 eligible files rewrote and reloaded, and all 57,249
 pages remained visible. Read, round-trip, content-stream, and Markdown processing failures remained
-zero. For the 7,807-file snapshot these published counts are executable assertions, not only log
-output; a one-page metric change therefore fails the corpus test.
+zero. For the exact 7,807-file, 918,216,253-byte snapshot these published counts are executable
+assertions, not only log output; a one-page metric change therefore fails the corpus test. Partial
+or different inventories still exercise every file they discover, but do not inherit fixed metric
+assertions from the published snapshot merely because their file count happens to match.
 
 Corpus tests write successful counters through xUnit v3 output as lines beginning with
 `INKWRIGHT_METRIC`. Use detailed console output to retain them:
@@ -114,10 +184,19 @@ files, I/O failures, and processing failures. The Markdown line reports selected
 successful exports, and resolved versus referenced marked-content identifiers. These are raw,
 reproducible counters rather than a subjective quality score.
 
-When comparing results, first require the same file count and total byte count. A different corpus is
-a different experiment, even when all tests pass.
+When comparing results, first require the same tree SHA-256. A different corpus is a different
+experiment, even when its file count and total byte count happen to match and all tests pass.
 
-## NuGet Candidate
+## NuGet Candidates
+
+The local 0.1.4 hardening candidate produced exactly five `.nupkg` and five `.snupkg` files. Package
+validation accepted the public API against 0.1.3, and structural inspection accepted the exact
+dependency graph, metadata, README/NOTICE files, XML documentation, analyzer/CMap assets, repository
+commit, and package-specific portable PDBs. An external `win-x64` Native AOT consumer restored all
+five packages from an isolated cache and successfully created, signed, and verified a PDF
+(`pages=1; sha256=True; signed=True`). Because this check ran in the private monorepo, it is not
+Source Link release evidence: the packages must be rebuilt and `sourcelink test` must pass at the
+corresponding public mirror commit before publication.
 
 Version 0.1.3 produced exactly five packages. The SDK package validator accepted every one against
 the published 0.1.2 baseline. ZIP inspection confirmed a non-empty package-specific description,

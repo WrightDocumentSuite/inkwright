@@ -1,0 +1,56 @@
+name: Private corpus
+
+on:
+  schedule:
+    - cron: '23 2 * * 0'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: private-corpus
+  cancel-in-progress: false
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+  DOTNET_NOLOGO: '1'
+  NUGET_XMLDOC_MODE: skip
+  INKWRIGHT_REQUIRE_REFERENCE_CORPUS: '1'
+
+jobs:
+  corpus:
+    name: Full external PDF corpus
+    if: vars.INKWRIGHT_CORPUS_ENABLED == 'true'
+    runs-on:
+      - self-hosted
+      - inkwright-corpus
+    timeout-minutes: 180
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install .NET SDK from global.json
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+
+      - name: Verify corpus mount
+        shell: pwsh
+        run: |
+          $workspaceParent = Split-Path -Parent $env:GITHUB_WORKSPACE
+          $expected = '9564a7a968078c1565b82a199952384f9d2dee83be93bf43735445860261824f'
+          $identity = & ./.github/scripts/Get-CorpusIdentity.ps1 -CorpusParent $workspaceParent
+          if ($identity.Sha256 -ne $expected) {
+            throw "The full-corpus job requires tree SHA-256 $expected; found $($identity.Sha256) for $($identity.Count) PDFs / $($identity.Bytes) bytes."
+          }
+          "INKWRIGHT_CORPUS=$workspaceParent" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Restore
+        run: dotnet restore Inkwright.slnx --locked-mode
+
+      - name: Run full suite with corpus
+        run: dotnet test Inkwright.slnx --configuration Release --no-restore -p:ContinuousIntegrationBuild=true

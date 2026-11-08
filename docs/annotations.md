@@ -36,6 +36,7 @@ page.Annotations.AddInk([[new PdfPoint(80, 300), new PdfPoint(120, 340), new Pdf
 page.Annotations.AddStamp(new PdfRectangle(400, 720, 550, 770), "Approved");
 page.Annotations.AddAttachment(new PdfPoint(72, 200), "calculation.xlsx", bytes);
 page.Annotations.AddLink(new PdfRectangle(72, 100, 200, 120), "https://example.org");
+page.Annotations.AddLink(new PdfRectangle(72, 70, 200, 90), destinationPageIndex: 1);
 
 // Outline a region, draw a polyline, mark a missing punctuation mark
 page.Annotations.AddPolygon([new PdfPoint(80, 600), new PdfPoint(200, 660), new PdfPoint(260, 580)]);
@@ -334,4 +335,27 @@ Separately, it is checked that a PDF/A-2 document does not carry attachments tha
 
 ## What is read but not modeled
 
-Types absent from the model (`Sound`, `Movie`, `Screen`, `Watermark`, `Redact`, `3D`) are returned as `PdfGenericAnnotation`: common properties are available, the rest through `annotation.Dictionary`. On rewrite they are preserved intact. They do not participate in review exchange: XFDF describes them with elements not in the comment list, and such an element is flagged with a warning.
+Types absent from the model (`Sound`, `Movie`, `Screen`, `Watermark`, `3D`) are returned as `PdfGenericAnnotation`: common properties are available, the rest through `annotation.Dictionary`. On rewrite they are preserved intact. They do not participate in review exchange: XFDF describes them with elements not in the comment list, and such an element is flagged with a warning.
+
+## Redaction annotations and physical scrubbing
+
+A `/Redact` annotation marks a region slated for permanent removal (`page.Annotations.AddRedaction(rect, overlayText: "[REDACTED]")`), and `page.ApplyRedactions()` (or `document.ApplyRedactions()`) executes the physical redaction:
+
+```csharp
+using Inkwright.Redaction;
+
+// Mark regions via /Redact annotations, then apply them all at once
+page.Annotations.AddRedaction(new PdfRectangle(72, 680, 260, 710), overlayText: "[CONFIDENTIAL]");
+PdfRedactionResult applied = document.ApplyRedactions();
+
+// Or redact directly by rectangle or text search
+PdfRedactionResult byText = document.RedactText(
+    "SSN 123-45-6789",
+    new PdfRedactionOptions { OverlayText = "[REDACTED]", FillColor = PdfColor.Black });
+
+// Always save a full rewrite with unused-object pruning so earlier revisions are not kept
+document.Save("redacted.pdf", new PdfSaveOptions { RemoveUnusedObjects = true });
+```
+
+Applying redaction rewrites the page and Form XObject content streams (`Tj`, `TJ`, `'`, `"`) to remove the intersecting glyph character codes while inserting exact `TJ` kerning adjustments so surviving glyphs on the same line remain at their original coordinates. Intersecting inline images (`BI…ID…EI`), image XObjects (`Do`), and annotations are removed, unreferenced image streams are pruned from `/Resources /XObject`, and the opaque fill box and optional overlay text are painted inside an `/Artifact` marked-content block.
+

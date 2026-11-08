@@ -1,0 +1,85 @@
+name: Bounded fuzz campaign
+
+on:
+  schedule:
+    - cron: '41 3 * * 3'
+  workflow_dispatch:
+    inputs:
+      duration_seconds:
+        description: Seconds to fuzz each target
+        required: true
+        default: '300'
+        type: choice
+        options:
+          - '60'
+          - '300'
+          - '900'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fuzz-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+  DOTNET_NOLOGO: '1'
+  NUGET_XMLDOC_MODE: skip
+
+jobs:
+  campaign:
+    name: Fuzz ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - reader
+          - cff
+          - jbig2
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install .NET SDK from global.json
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+
+      - name: Install AFL++
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes afl++
+
+      - name: Install pinned SharpFuzz instrumenter
+        shell: pwsh
+        run: >-
+          dotnet tool install SharpFuzz.CommandLine
+          --version 2.3.0
+          --tool-path artifacts/fuzz-tools
+
+      - name: Restore fuzz harness
+        run: dotnet restore fuzz/Inkwright.Fuzz/Inkwright.Fuzz.csproj --locked-mode
+
+      - name: Run bounded instrumented campaign
+        shell: pwsh
+        run: |
+          $duration = [int]'${{ inputs.duration_seconds || '300' }}'
+          ./.github/scripts/Run-FuzzCampaign.ps1 `
+            -Target '${{ matrix.target }}' `
+            -DurationSeconds $duration `
+            -SharpFuzzCommand (Join-Path $PWD 'artifacts/fuzz-tools/sharpfuzz')
+
+      - name: Upload queues, crashes and hangs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: fuzz-${{ matrix.target }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/fuzz/${{ matrix.target }}/findings
+          if-no-files-found: warn
+          retention-days: 14

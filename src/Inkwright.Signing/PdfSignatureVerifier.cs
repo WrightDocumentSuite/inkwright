@@ -1,7 +1,7 @@
+using System.Formats.Asn1;
 using System.Security.Cryptography;
 using System.Security.Cryptography.Pkcs;
 using System.Security.Cryptography.X509Certificates;
-using System.Formats.Asn1;
 using Inkwright.Cos;
 using Inkwright.Forms;
 
@@ -46,6 +46,25 @@ public sealed record PdfSignatureInfo(
     /// DocMDP transform (§12.8.2.2). Nothing for an ordinary approval signature.
     /// </summary>
     public PdfCertificationLevel? CertificationLevel { get; init; }
+
+    /// <summary>
+    /// Which form fields this signature freezes (§12.7.5.5 and §12.8.2.4), or <see langword="null"/>
+    /// when the signature carries no field lock.
+    /// </summary>
+    public PdfFieldLock? FieldLock { get; init; }
+
+    /// <summary>
+    /// Whether incremental revisions appended after this signature comply with the <c>DocMDP</c>
+    /// certification permissions and <c>FieldMDP</c> locks in force when it was signed.
+    /// </summary>
+    public bool AreSubsequentChangesPermitted => ModificationViolations.Count == 0;
+
+    /// <summary>
+    /// Any <c>DocMDP</c> or <c>FieldMDP</c> violations introduced by incremental revisions after
+    /// this signature was applied. Empty when the signature covers the whole file or all subsequent
+    /// incremental updates are permitted.
+    /// </summary>
+    public IReadOnlyList<string> ModificationViolations { get; init; } = [];
 }
 
 /// <summary>
@@ -92,13 +111,18 @@ public static class PdfSignatureVerifier
             if (field.Inherited(PdfName.Get("V")).AsDictionary is not { } signature)
                 continue;
 
-            results.Add(Check(field.FullName, signature, file));
+            results.Add(Check(document, field.FullName, field.Dictionary, signature, file));
         }
 
         return results;
     }
 
-    private static PdfSignatureInfo Check(string fieldName, PdfDictionary signature, byte[] file)
+    private static PdfSignatureInfo Check(
+        PdfDocument document,
+        string fieldName,
+        PdfDictionary fieldDictionary,
+        PdfDictionary signature,
+        byte[] file)
     {
         DateTimeOffset? signingTime = PdfDate.TryParse(signature.GetTextString(PdfName.Get("M")), out DateTimeOffset moment)
             ? moment
@@ -116,6 +140,17 @@ public static class PdfSignatureVerifier
         }
 
         bool coversEverything = CoversEverythingButContents(parts, file);
+        PdfCertificationLevel? certificationLevel = ReadCertificationLevel(signature);
+        PdfFieldLock? fieldLock = PdfModificationVerifier.ReadFieldLock(fieldDictionary, signature);
+        IReadOnlyList<string> violations = coversEverything
+            ? []
+            : PdfModificationVerifier.AnalyzeSubsequentChanges(
+                fieldName,
+                certificationLevel,
+                fieldLock,
+                parts,
+                file,
+                document);
 
         ReadOnlySpan<byte> contents = signature.Get(PdfName.Get("Contents")).AsStringBytes;
         if (contents.IsEmpty)
@@ -159,7 +194,9 @@ public static class PdfSignatureVerifier
                     reason,
                     edwardsProblem)
                 {
-                    CertificationLevel = ReadCertificationLevel(signature),
+                    CertificationLevel = certificationLevel,
+                    FieldLock = fieldLock,
+                    ModificationViolations = violations,
                 };
             }
 
@@ -181,7 +218,9 @@ public static class PdfSignatureVerifier
                 problem)
             {
                 TimestampIntact = timestampIntact,
-                CertificationLevel = ReadCertificationLevel(signature),
+                CertificationLevel = certificationLevel,
+                FieldLock = fieldLock,
+                ModificationViolations = violations,
             };
         }
         catch (Exception ex) when (ex is CryptographicException or ArgumentException)
@@ -257,6 +296,9 @@ public static class PdfSignatureVerifier
         }
         catch (CryptographicException)
         {
+            if (signer.DigestAlgorithm.Value == "2.16.840.1.101.3.4.2.18" && signer.Certificate is { } shakeCert)
+                return EdwardsCms.VerifyShake256(encoded, covered, shakeCert);
+
             return false;
         }
     }

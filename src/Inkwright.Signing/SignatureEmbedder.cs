@@ -19,6 +19,27 @@ internal static class SignatureEmbedder
     /// <param name="describeOverflow">Names the option to raise when the object does not fit.</param>
     internal static byte[] Embed(byte[] file, Func<byte[], byte[]> produce, string describeOverflow)
     {
+        Placeholder placeholder = Prepare(file);
+        byte[] blob = produce(placeholder.Covered);
+        return Finish(file, placeholder, blob, describeOverflow);
+    }
+
+    /// <summary>Asynchronously fills in the byte range and signature value.</summary>
+    internal static async ValueTask<byte[]> EmbedAsync(
+        byte[] file,
+        Func<byte[], CancellationToken, ValueTask<byte[]>> produce,
+        string describeOverflow,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        Placeholder placeholder = Prepare(file);
+        byte[] blob = await produce(placeholder.Covered, cancellationToken).ConfigureAwait(false);
+        cancellationToken.ThrowIfCancellationRequested();
+        return Finish(file, placeholder, blob, describeOverflow);
+    }
+
+    private static Placeholder Prepare(byte[] file)
+    {
         ReadOnlySpan<byte> span = file;
 
         int rangeStart = span.LastIndexOf(Encoding.ASCII.GetBytes(ByteRangePlaceholder));
@@ -56,16 +77,25 @@ internal static class SignatureEmbedder
         file.AsSpan(0, hexStart).CopyTo(covered);
         file.AsSpan(afterHex, tailLength).CopyTo(covered.AsSpan(hexStart));
 
-        byte[] blob = produce(covered);
+        return new Placeholder(hexStart, hexEnd, covered);
+    }
 
-        int available = (hexEnd - hexStart - 1) / 2;
+    private static byte[] Finish(
+        byte[] file,
+        Placeholder placeholder,
+        byte[] blob,
+        string describeOverflow)
+    {
+        int available = (placeholder.HexEnd - placeholder.HexStart - 1) / 2;
         if (blob.Length > available)
         {
             throw new InvalidOperationException(
                 $"The signature needs {blob.Length} bytes but only {available} were reserved; raise {describeOverflow}.");
         }
 
-        Span<byte> destination = file.AsSpan(hexStart + 1, hexEnd - hexStart - 1);
+        Span<byte> destination = file.AsSpan(
+            placeholder.HexStart + 1,
+            placeholder.HexEnd - placeholder.HexStart - 1);
         destination.Fill((byte)'0');
 
         for (int i = 0; i < blob.Length; i++)
@@ -78,4 +108,6 @@ internal static class SignatureEmbedder
     }
 
     private static byte HexDigit(int value) => (byte)(value < 10 ? '0' + value : 'A' + value - 10);
+
+    private readonly record struct Placeholder(int HexStart, int HexEnd, byte[] Covered);
 }

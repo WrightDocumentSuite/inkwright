@@ -1,9 +1,9 @@
+using System.Text;
 using Inkwright.Cos;
 using Inkwright.Diagnostics;
 using Inkwright.Filters;
 using Inkwright.IO;
 using Inkwright.Syntax;
-using System.Text;
 using Xunit;
 
 namespace Inkwright.Tests;

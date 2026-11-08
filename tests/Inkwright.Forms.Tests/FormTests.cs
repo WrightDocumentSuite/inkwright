@@ -17,6 +17,14 @@ public partial record InvoiceForm(
 
 public class FormTests
 {
+    private static readonly string[] CorpusRootNames =
+    [
+        "PdfPig-0.1.15",
+        "itext-dotnet-9.7.0",
+        "pdf.js-6.1.200",
+        "XMP-Toolkit-SDK-main",
+    ];
+
     [Fact]
     public void BuildsFillsAndReadsAForm()
     {
@@ -120,7 +128,7 @@ public class FormTests
         Assert.SkipWhen(
             formFiles.Length == 0,
             $"No PDF form candidates were found under '{corpusRoot}'. Set INKWRIGHT_CORPUS " +
-            "to the shared directory that contains the unpacked PdfPig and iText reference trees.");
+            "to the shared directory that contains the four named reference trees.");
 
         int documentsWithForms = 0;
         int fieldsRead = 0;
@@ -191,7 +199,7 @@ public class FormTests
 
             unavailableReason =
                 $"{environmentVariable} points to missing directory '{fullPath}'. Set it to the " +
-                "shared directory that contains the unpacked PdfPig and iText reference trees.";
+                "shared directory that contains the four named reference trees.";
             return null;
         }
 
@@ -209,7 +217,7 @@ public class FormTests
 
         unavailableReason =
             "No PDF form corpus was found. Set INKWRIGHT_CORPUS to the shared directory that " +
-            "contains the unpacked PdfPig and iText reference trees; the corpus is intentionally " +
+            "contains the four named reference trees; the corpus is intentionally " +
             "not included in a public clone.";
         return null;
     }
@@ -218,8 +226,7 @@ public class FormTests
     {
         try
         {
-            return Directory.EnumerateDirectories(directory, "PdfPig-*", SearchOption.TopDirectoryOnly).Any() ||
-                   Directory.EnumerateDirectories(directory, "itext-dotnet-*", SearchOption.TopDirectoryOnly).Any();
+            return CorpusRootNames.Any(name => Directory.Exists(Path.Combine(directory, name)));
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -229,14 +236,21 @@ public class FormTests
 
     private static IEnumerable<string> FindFormFiles(string root)
     {
-        foreach (string directory in Directory.EnumerateDirectories(root).Order(StringComparer.OrdinalIgnoreCase))
+        string rootName = Path.GetFileName(Path.TrimEndingDirectorySeparator(root));
+        foreach (string corpusName in CorpusRootNames)
         {
-            string directoryName = Path.GetFileName(directory);
-            if (directoryName is "Inkwright" or "artifacts" or ".git")
+            string directory = string.Equals(rootName, corpusName, StringComparison.OrdinalIgnoreCase)
+                ? root
+                : Path.Combine(root, corpusName);
+            if (!Directory.Exists(directory))
                 continue;
 
             foreach (string file in Directory
-                         .EnumerateFiles(directory, "*.pdf", SearchOption.AllDirectories)
+                         .EnumerateFiles(directory, "*", SearchOption.AllDirectories)
+                         .Where(path => string.Equals(
+                             Path.GetExtension(path),
+                             ".pdf",
+                             StringComparison.OrdinalIgnoreCase))
                          .Order(StringComparer.OrdinalIgnoreCase))
             {
                 string name = Path.GetFileName(file);

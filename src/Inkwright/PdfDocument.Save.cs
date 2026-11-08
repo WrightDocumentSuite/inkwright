@@ -346,6 +346,7 @@ public sealed partial class PdfDocument
         // takes effect for everything that follows.
         writer.WriteObject(id, PdfValue.Dictionary(encrypt));
         _added.Remove(id.Number);
+        _addedGenerations.Remove(id.Number);
         writer.UseEncryption(handler);
         return handler;
     }
@@ -417,7 +418,9 @@ public sealed partial class PdfDocument
     }
 
     private int GenerationOf(int number) =>
-        _added.ContainsKey(number) ? 0 : _reader?.GetGeneration(number) ?? 0;
+        _addedGenerations.TryGetValue(number, out int generation)
+            ? generation
+            : _reader?.GetGeneration(number) ?? 0;
 
     private HashSet<int> ComputeReachable()
     {
@@ -458,22 +461,22 @@ public sealed partial class PdfDocument
                 break;
 
             case PdfValueKind.Array:
-            {
-                PdfArray array = value.AsArray!;
-                for (int i = 0; i < array.Count; i++)
-                    Scan(array[i], depth + 1, enqueue);
+                {
+                    PdfArray array = value.AsArray!;
+                    for (int i = 0; i < array.Count; i++)
+                        Scan(array[i], depth + 1, enqueue);
 
-                break;
-            }
+                    break;
+                }
 
             case PdfValueKind.Dictionary:
             case PdfValueKind.Stream:
-            {
-                foreach (KeyValuePair<PdfName, PdfValue> entry in value.AsDictionary!)
-                    Scan(entry.Value, depth + 1, enqueue);
+                {
+                    foreach (KeyValuePair<PdfName, PdfValue> entry in value.AsDictionary!)
+                        Scan(entry.Value, depth + 1, enqueue);
 
-                break;
-            }
+                    break;
+                }
 
             default:
                 break;

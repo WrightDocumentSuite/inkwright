@@ -155,34 +155,34 @@ internal static class FdfWriter
             switch (value.Kind)
             {
                 case PdfValueKind.Reference:
-                {
-                    int number = value.AsReference.Number;
-                    if (objects.ContainsKey(number))
-                        break;
+                    {
+                        int number = value.AsReference.Number;
+                        if (objects.ContainsKey(number))
+                            break;
 
-                    PdfValue body = container.GetObject(number);
-                    objects[number] = body;
-                    pending.Push(body);
-                    break;
-                }
+                        PdfValue body = container.GetObject(number);
+                        objects[number] = body;
+                        pending.Push(body);
+                        break;
+                    }
 
                 case PdfValueKind.Array:
-                {
-                    PdfArray array = value.AsArray!;
-                    for (int i = 0; i < array.Count; i++)
-                        pending.Push(array[i]);
+                    {
+                        PdfArray array = value.AsArray!;
+                        for (int i = 0; i < array.Count; i++)
+                            pending.Push(array[i]);
 
-                    break;
-                }
+                        break;
+                    }
 
                 case PdfValueKind.Dictionary:
                 case PdfValueKind.Stream:
-                {
-                    foreach ((PdfName _, PdfValue entry) in value.AsDictionary!)
-                        pending.Push(entry);
+                    {
+                        foreach ((PdfName _, PdfValue entry) in value.AsDictionary!)
+                            pending.Push(entry);
 
-                    break;
-                }
+                        break;
+                    }
 
                 default:
                     break;

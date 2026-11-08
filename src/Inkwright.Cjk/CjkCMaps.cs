@@ -41,13 +41,19 @@ public sealed class CjkCMaps : ICMapSource
     {
         ArgumentException.ThrowIfNullOrEmpty(name);
 
-        if (!KnownNames.Value.Contains(name))
+        string resource = KnownNames.Value.Contains(name)
+            ? name
+            : name is "Adobe-KR-UCS2" or "Adobe-KR-0" && KnownNames.Value.Contains("Adobe-Korea1-UCS2")
+                ? name == "Adobe-KR-UCS2" ? "Adobe-Korea1-UCS2" : "Adobe-Korea1-2"
+                : string.Empty;
+
+        if (resource.Length == 0)
             return null;
 
         if (_depth >= MaxDepth)
             return null;
 
-        using Stream? stream = Assembly.GetManifestResourceStream(ResourceName(name));
+        using Stream? stream = Assembly.GetManifestResourceStream(ResourceName(resource));
         if (stream is null)
             return null;
 

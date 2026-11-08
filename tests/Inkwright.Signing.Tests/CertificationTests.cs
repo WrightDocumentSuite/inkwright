@@ -201,4 +201,123 @@ public class CertificationTests
         PdfDictionary reference = signature.GetArray(PdfName.Get("Reference"))!.GetDictionary(0)!;
         Assert.Equal("SHA3-256", reference.GetName(PdfName.Get("DigestMethod"))!.Value);
     }
+
+    [Fact]
+    public void DocMdpNoChanges_FlagsSubsequentApprovalSignature()
+    {
+        using X509Certificate2 author = TestDocuments.CreateCertificate("CN=Author");
+        using X509Certificate2 reviewer = TestDocuments.CreateCertificate("CN=Reviewer");
+
+        byte[] certified = TestDocuments.Sign(TestDocuments.Build(), new PdfSignatureOptions
+        {
+            Certificate = author,
+            FieldName = "Certification",
+            CertificationLevel = PdfCertificationLevel.NoChanges,
+        });
+
+        byte[] modified = TestDocuments.Sign(certified, new PdfSignatureOptions
+        {
+            Certificate = reviewer,
+            FieldName = "Approval",
+        });
+
+        IReadOnlyList<PdfSignatureInfo> results = PdfSignatureVerifier.Verify(modified);
+        PdfSignatureInfo certInfo = results.Single(r => r.FieldName == "Certification");
+        Assert.True(certInfo.IsIntact);
+        Assert.False(certInfo.AreSubsequentChangesPermitted);
+        Assert.NotEmpty(certInfo.ModificationViolations);
+    }
+
+    [Fact]
+    public void DocMdpFormFilling_FlagsAddedCommentButPermitsFormFill()
+    {
+        using X509Certificate2 author = TestDocuments.CreateCertificate("CN=Author");
+
+        byte[] basePdf;
+        using (var doc = PdfDocument.Create())
+        {
+            PdfPage page = doc.Pages.Add(PageSize.A4);
+            PdfForm form = PdfForm.OpenOrCreate(doc);
+            form.AddTextField(page, PdfRectangle.FromSize(72, 700, 150, 20), "customer.name", "Alice");
+            basePdf = doc.ToArray(new PdfSaveOptions { UseObjectStreams = false });
+        }
+
+        byte[] certified = TestDocuments.Sign(basePdf, new PdfSignatureOptions
+        {
+            Certificate = author,
+            FieldName = "Certification",
+            CertificationLevel = PdfCertificationLevel.FormFilling,
+        });
+
+        byte[] filled;
+        using (var doc = PdfDocument.Load(certified))
+        {
+            PdfForm.Open(doc)!.Set("customer.name", "Bob");
+            filled = doc.ToIncrementalArray(new PdfSaveOptions { UseObjectStreams = false });
+        }
+
+        PdfSignatureInfo afterFill = Assert.Single(PdfSignatureVerifier.Verify(filled));
+        Assert.True(afterFill.IsIntact);
+        Assert.True(afterFill.AreSubsequentChangesPermitted);
+
+        byte[] commented;
+        using (var doc = PdfDocument.Load(certified))
+        {
+            doc.Pages[0].Annotations.AddNote(new PdfPoint(100, 600), "Unauthorized comment");
+            commented = doc.ToIncrementalArray(new PdfSaveOptions { UseObjectStreams = false });
+        }
+
+        PdfSignatureInfo afterComment = Assert.Single(PdfSignatureVerifier.Verify(commented));
+        Assert.True(afterComment.IsIntact);
+        Assert.False(afterComment.AreSubsequentChangesPermitted);
+        Assert.Contains(afterComment.ModificationViolations, v => v.Contains("annotations", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void FieldMdp_DetectsLockedFieldModificationAndAllowsUnlockedField()
+    {
+        using X509Certificate2 signer = TestDocuments.CreateCertificate("CN=Signer");
+
+        byte[] basePdf;
+        using (var doc = PdfDocument.Create())
+        {
+            PdfPage page = doc.Pages.Add(PageSize.A4);
+            PdfForm form = PdfForm.OpenOrCreate(doc);
+            form.AddTextField(page, PdfRectangle.FromSize(72, 700, 150, 20), "customer.total", "100.00");
+            form.AddTextField(page, PdfRectangle.FromSize(72, 660, 150, 20), "customer.notes", "Initial");
+            basePdf = doc.ToArray(new PdfSaveOptions { UseObjectStreams = false });
+        }
+
+        byte[] signed = TestDocuments.Sign(basePdf, new PdfSignatureOptions
+        {
+            Certificate = signer,
+            FieldName = "Sig1",
+            FieldLock = PdfFieldLock.Include("customer.total"),
+        });
+
+        byte[] unlockedEdited;
+        using (var doc = PdfDocument.Load(signed))
+        {
+            PdfForm.Open(doc)!.Set("customer.notes", "Updated notes");
+            unlockedEdited = doc.ToIncrementalArray(new PdfSaveOptions { UseObjectStreams = false });
+        }
+
+        PdfSignatureInfo okInfo = Assert.Single(PdfSignatureVerifier.Verify(unlockedEdited));
+        Assert.NotNull(okInfo.FieldLock);
+        Assert.True(okInfo.FieldLock!.IsFieldLocked("customer.total"));
+        Assert.False(okInfo.FieldLock.IsFieldLocked("customer.notes"));
+        Assert.True(okInfo.AreSubsequentChangesPermitted);
+
+        byte[] lockedEdited;
+        using (var doc = PdfDocument.Load(signed))
+        {
+            PdfForm.Open(doc)!.Set("customer.total", "999.99");
+            lockedEdited = doc.ToIncrementalArray(new PdfSaveOptions { UseObjectStreams = false });
+        }
+
+        PdfSignatureInfo badInfo = Assert.Single(PdfSignatureVerifier.Verify(lockedEdited));
+        Assert.True(badInfo.IsIntact);
+        Assert.False(badInfo.AreSubsequentChangesPermitted);
+        Assert.Contains(badInfo.ModificationViolations, v => v.Contains("customer.total", StringComparison.Ordinal));
+    }
 }

@@ -15,15 +15,20 @@ public sealed partial class PdfDocument : IPdfResolver, IDisposable
 {
     /// <summary>What the library calls itself in the information dictionary and in the metadata.</summary>
     internal static readonly string ProducerName =
-        $"Inkwright {typeof(PdfDocument).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion.Split('+')[0] ?? "0.1.3"}";
+        $"Inkwright {typeof(PdfDocument).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion.Split('+')[0] ?? "0.1.4"}";
 
     private readonly PdfReader? _reader;
     private readonly Dictionary<int, PdfValue> _added = [];
+    private readonly Dictionary<int, int> _addedGenerations = [];
     private readonly HashSet<int> _changed = [];
     private readonly List<Fonts.EmbeddedTrueTypeFont> _embeddedFonts = [];
     private IReadOnlyList<Tagging.PdfStructureNode>? _structure;
     private int _nextNumber = 1;
     private bool _disposed;
+
+    /// <summary>The combined page-content cap inherited from this document's reader.</summary>
+    internal PdfEffectiveStreamLimit DecodedStreamLimit =>
+        _reader?.DecodedStreamLimit ?? PdfResourceBudget.ProcessWideStreamLimit();
 
     private PdfDocument(PdfReader? reader)
     {
@@ -120,16 +125,16 @@ public sealed partial class PdfDocument : IPdfResolver, IDisposable
     }
 
     /// <summary>The document catalog (§7.7.2).</summary>
-    public PdfDictionary Catalog { get; }
+    public PdfDictionary Catalog { get; private set; }
 
     /// <summary>The trailer dictionary, holding at least <c>Root</c> and <c>Info</c>.</summary>
-    public PdfDictionary Trailer { get; }
+    public PdfDictionary Trailer { get; private set; }
 
     /// <summary>The pages, in display order.</summary>
-    public PdfPageCollection Pages { get; }
+    public PdfPageCollection Pages { get; private set; }
 
     /// <summary>The document information dictionary.</summary>
-    public PdfDocumentInfo Info { get; }
+    public PdfDocumentInfo Info { get; private set; }
 
     /// <summary>Everything the reader had to work around while loading this document.</summary>
     public LoadDiagnostics Diagnostics { get; }
@@ -245,7 +250,7 @@ public sealed partial class PdfDocument : IPdfResolver, IDisposable
             }
 
             foreach (int number in _added.Keys)
-                yield return new PdfObjectId(number, 0);
+                yield return new PdfObjectId(number, GenerationOf(number));
         }
     }
 
@@ -294,6 +299,41 @@ public sealed partial class PdfDocument : IPdfResolver, IDisposable
         return extracted;
     }
 
+    /// <summary>
+    /// Finds every occurrence of a phrase across all pages in the document and physically redacts
+    /// the underlying glyphs.
+    /// </summary>
+    /// <param name="phrase">The text to find and remove.</param>
+    /// <param name="options">Visual overlay and removal settings.</param>
+    /// <param name="comparison">How to compare the text; case-insensitive by default.</param>
+    public PdfRedactionResult RedactText(
+        string phrase,
+        PdfRedactionOptions? options = null,
+        StringComparison comparison = StringComparison.OrdinalIgnoreCase)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(phrase);
+
+        PdfRedactionResult total = default;
+        for (int i = 0; i < Pages.Count; i++)
+            total = total.Combine(Pages[i].RedactText(phrase, options, comparison));
+
+        return total;
+    }
+
+    /// <summary>
+    /// Applies every <c>/Redact</c> annotation across all pages in the document, physically
+    /// scrubbing the content beneath each mark, painting its overlay and removing the annotation.
+    /// </summary>
+    /// <param name="options">Fallback visual overlay and removal settings.</param>
+    public PdfRedactionResult ApplyRedactions(PdfRedactionOptions? options = null)
+    {
+        PdfRedactionResult total = default;
+        for (int i = 0; i < Pages.Count; i++)
+            total = total.Combine(Pages[i].ApplyRedactions(options));
+
+        return total;
+    }
+
     /// <summary>Opens a document from a byte array.</summary>
     /// <param name="data">The whole file.</param>
     /// <param name="options">How much damage to tolerate and what password to use.</param>
@@ -309,8 +349,12 @@ public sealed partial class PdfDocument : IPdfResolver, IDisposable
     /// <summary>Opens a document from disk.</summary>
     /// <param name="path">The file to read.</param>
     /// <param name="options">How much damage to tolerate and what password to use.</param>
-    public static PdfDocument Load(string path, PdfReadOptions? options = null) =>
-        new(PdfReader.Open(File.ReadAllBytes(path), options));
+    public static PdfDocument Load(string path, PdfReadOptions? options = null)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(path);
+        using FileStream stream = new(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+        return new PdfDocument(PdfReader.Open(stream, options));
+    }
 
     /// <summary>Opens a document from disk.</summary>
     /// <param name="path">The file to read.</param>
@@ -319,8 +363,8 @@ public sealed partial class PdfDocument : IPdfResolver, IDisposable
     public static async Task<PdfDocument> LoadAsync(
         string path, PdfReadOptions? options = null, CancellationToken cancellationToken = default)
     {
-        byte[] data = await File.ReadAllBytesAsync(path, cancellationToken).ConfigureAwait(false);
-        return Load(data, options);
+        PdfReader reader = await PdfReader.OpenAsync(path, options, cancellationToken).ConfigureAwait(false);
+        return new PdfDocument(reader);
     }
 
     /// <summary>Opens a document from a stream, reading it fully into memory.</summary>
@@ -365,6 +409,7 @@ public sealed partial class PdfDocument : IPdfResolver, IDisposable
         var id = new PdfObjectId(_nextNumber++, 0);
         Attach(value, 0);
         _added[id.Number] = value;
+        _addedGenerations[id.Number] = id.Generation;
         return id;
     }
 
@@ -376,6 +421,7 @@ public sealed partial class PdfDocument : IPdfResolver, IDisposable
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(id.Number);
         Attach(value, 0);
         _added[id.Number] = value;
+        _addedGenerations[id.Number] = id.Generation;
         _nextNumber = Math.Max(_nextNumber, id.Number + 1);
     }
 
@@ -411,6 +457,7 @@ public sealed partial class PdfDocument : IPdfResolver, IDisposable
 
         _disposed = true;
         _added.Clear();
+        _addedGenerations.Clear();
     }
 
     private void Attach(PdfValue value, int depth)
@@ -421,31 +468,31 @@ public sealed partial class PdfDocument : IPdfResolver, IDisposable
         switch (value.Kind)
         {
             case PdfValueKind.Array:
-            {
-                PdfArray array = value.AsArray!;
-                if (array.Resolver is not null)
-                    return;
+                {
+                    PdfArray array = value.AsArray!;
+                    if (array.Resolver is not null)
+                        return;
 
-                array.Resolver = this;
-                for (int i = 0; i < array.Count; i++)
-                    Attach(array[i], depth + 1);
+                    array.Resolver = this;
+                    for (int i = 0; i < array.Count; i++)
+                        Attach(array[i], depth + 1);
 
-                break;
-            }
+                    break;
+                }
 
             case PdfValueKind.Dictionary:
             case PdfValueKind.Stream:
-            {
-                PdfDictionary dictionary = value.AsDictionary!;
-                if (dictionary.Resolver is not null)
-                    return;
+                {
+                    PdfDictionary dictionary = value.AsDictionary!;
+                    if (dictionary.Resolver is not null)
+                        return;
 
-                dictionary.Resolver = this;
-                foreach (KeyValuePair<PdfName, PdfValue> entry in dictionary)
-                    Attach(entry.Value, depth + 1);
+                    dictionary.Resolver = this;
+                    foreach (KeyValuePair<PdfName, PdfValue> entry in dictionary)
+                        Attach(entry.Value, depth + 1);
 
-                break;
-            }
+                    break;
+                }
 
             default:
                 break;

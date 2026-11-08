@@ -1,5 +1,5 @@
-using Inkwright.Cos;
 using System.Runtime.InteropServices;
+using Inkwright.Cos;
 
 namespace Inkwright.Filters;
 
@@ -14,12 +14,22 @@ internal enum PdfBoundedDecodeStatus
     InvalidData,
 }
 
+/// <summary>The independent bound that stopped a bounded decode.</summary>
+internal enum PdfBoundedDecodeLimit
+{
+    None,
+    StreamOutput,
+    RetainedOutput,
+    Work,
+}
+
 /// <summary>A non-cached bounded decode result.</summary>
 internal readonly record struct PdfBoundedDecodeResult(
     ReadOnlyMemory<byte> Data,
     PdfBoundedDecodeStatus Status,
     PdfName? TerminalFilter = null,
-    long ProducedBytes = 0);
+    long ProducedBytes = 0,
+    PdfBoundedDecodeLimit ExceededLimit = PdfBoundedDecodeLimit.None);
 
 /// <summary>
 /// Runs the <c>Filter</c> chain of a stream dictionary. Image codecs are deliberately not decoded:
@@ -104,7 +114,10 @@ public static class PdfFilterPipeline
             }
 
             return raw.Length > effectiveLimit
-                ? new PdfBoundedDecodeResult(raw[..effectiveLimit], PdfBoundedDecodeStatus.LimitExceeded)
+                ? new PdfBoundedDecodeResult(
+                    raw[..effectiveLimit],
+                    PdfBoundedDecodeStatus.LimitExceeded,
+                    ExceededLimit: PdfBoundedDecodeLimit.StreamOutput)
                 : new PdfBoundedDecodeResult(raw, PdfBoundedDecodeStatus.Complete);
         }
 
@@ -230,17 +243,20 @@ public static class PdfFilterPipeline
                 return new PdfBoundedDecodeResult(
                     data,
                     PdfBoundedDecodeStatus.LimitExceeded,
-                    ProducedBytes: producedBytes);
+                    ProducedBytes: producedBytes,
+                    ExceededLimit: PdfBoundedDecodeLimit.Work);
             }
 
             data = ApplyOneBounded(
                 data,
                 filter,
                 parms,
-                (int)remainingWork,
-                out bool limitExceeded,
+                effectiveLimit,
+                remainingWork,
+                strict: true,
+                out PdfBoundedDecodeLimit exceededLimit,
                 out bool invalidData,
-                out int stageProducedBytes);
+                out long stageProducedBytes);
             producedBytes += stageProducedBytes;
             if (invalidData)
             {
@@ -251,12 +267,13 @@ public static class PdfFilterPipeline
                     producedBytes);
             }
 
-            if (limitExceeded)
+            if (exceededLimit != PdfBoundedDecodeLimit.None)
             {
                 return new PdfBoundedDecodeResult(
                     data,
                     PdfBoundedDecodeStatus.LimitExceeded,
-                    ProducedBytes: producedBytes);
+                    ProducedBytes: producedBytes,
+                    ExceededLimit: exceededLimit);
             }
         }
 
@@ -264,7 +281,143 @@ public static class PdfFilterPipeline
             ? new PdfBoundedDecodeResult(
                 data[..effectiveLimit],
                 PdfBoundedDecodeStatus.LimitExceeded,
-                ProducedBytes: producedBytes)
+                ProducedBytes: producedBytes,
+                ExceededLimit: PdfBoundedDecodeLimit.StreamOutput)
+            : new PdfBoundedDecodeResult(
+                data,
+                PdfBoundedDecodeStatus.Complete,
+                ProducedBytes: producedBytes);
+    }
+
+    /// <summary>
+    /// Applies the compatibility decoder under explicit output/work and filter-stage bounds. It
+    /// preserves the public decoder's tolerance for aliases and damaged encodings, but reports a
+    /// resource boundary instead of returning and caching a truncated prefix.
+    /// </summary>
+    internal static PdfBoundedDecodeResult DecodeCompatibilityBounded(
+        ReadOnlyMemory<byte> raw,
+        PdfDictionary dictionary,
+        int maxDecodedBytes,
+        int maxRetainedBytes,
+        long maxDecodeWorkBytes,
+        int maxFilterStages)
+    {
+        ArgumentNullException.ThrowIfNull(dictionary);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxDecodedBytes);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxRetainedBytes);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxDecodeWorkBytes);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxFilterStages);
+
+        // PdfResourceBudget already selected and named the exact request/global/runtime ceiling for
+        // this call. Re-reading the mutable process-wide setting here would race that classification.
+        int effectiveLimit = maxDecodedBytes;
+        PdfValue filterValue = dictionary.GetFirst(PdfNames.Filter, PdfName.Get("F"));
+        if (filterValue.Kind is not (PdfValueKind.Name or PdfValueKind.Array))
+        {
+            return raw.Length > maxRetainedBytes
+                ? new PdfBoundedDecodeResult(
+                    raw[..maxRetainedBytes],
+                    PdfBoundedDecodeStatus.LimitExceeded,
+                    ExceededLimit: PdfBoundedDecodeLimit.RetainedOutput)
+                : new PdfBoundedDecodeResult(raw, PdfBoundedDecodeStatus.Complete);
+        }
+
+        int declaredStages = filterValue.AsArray?.Count ?? 1;
+        if (declaredStages > maxFilterStages)
+        {
+            return new PdfBoundedDecodeResult(
+                raw,
+                PdfBoundedDecodeStatus.FilterChainLimit);
+        }
+
+        ReadOnlyMemory<byte> data = raw;
+        int index = 0;
+        int stages = 0;
+        long producedBytes = 0;
+
+        foreach (PdfValue entry in Enumerate(filterValue, dictionary))
+        {
+            PdfName? filter = entry.AsName;
+            if (filter is null)
+                continue;
+
+            if (++stages > maxFilterStages)
+            {
+                return new PdfBoundedDecodeResult(
+                    data,
+                    PdfBoundedDecodeStatus.FilterChainLimit,
+                    ProducedBytes: producedBytes);
+            }
+
+            PdfDictionary? parms = GetDecodeParms(dictionary, index++);
+            if (!IsCompatibilitySupportedFilter(filter) || IsImageCodec(filter))
+            {
+                if (data.Length > maxRetainedBytes)
+                {
+                    return new PdfBoundedDecodeResult(
+                        data[..maxRetainedBytes],
+                        PdfBoundedDecodeStatus.LimitExceeded,
+                        filter,
+                        producedBytes,
+                        PdfBoundedDecodeLimit.RetainedOutput);
+                }
+
+                return new PdfBoundedDecodeResult(
+                    data,
+                    PdfBoundedDecodeStatus.UndecodedFilter,
+                    filter,
+                    producedBytes);
+            }
+
+            long remainingWork = maxDecodeWorkBytes - producedBytes;
+            if (remainingWork <= 0)
+            {
+                return new PdfBoundedDecodeResult(
+                    data,
+                    PdfBoundedDecodeStatus.LimitExceeded,
+                    filter,
+                    producedBytes,
+                    PdfBoundedDecodeLimit.Work);
+            }
+
+            data = ApplyOneBounded(
+                data,
+                filter,
+                parms,
+                effectiveLimit,
+                remainingWork,
+                strict: false,
+                out PdfBoundedDecodeLimit exceededLimit,
+                out bool invalidData,
+                out long stageProducedBytes);
+            producedBytes += stageProducedBytes;
+
+            if (invalidData)
+            {
+                return new PdfBoundedDecodeResult(
+                    data,
+                    PdfBoundedDecodeStatus.InvalidData,
+                    filter,
+                    producedBytes);
+            }
+
+            if (exceededLimit != PdfBoundedDecodeLimit.None)
+            {
+                return new PdfBoundedDecodeResult(
+                    data,
+                    PdfBoundedDecodeStatus.LimitExceeded,
+                    filter,
+                    producedBytes,
+                    exceededLimit);
+            }
+        }
+
+        return data.Length > maxRetainedBytes
+            ? new PdfBoundedDecodeResult(
+                data[..maxRetainedBytes],
+                PdfBoundedDecodeStatus.LimitExceeded,
+                ProducedBytes: producedBytes,
+                ExceededLimit: PdfBoundedDecodeLimit.RetainedOutput)
             : new PdfBoundedDecodeResult(
                 data,
                 PdfBoundedDecodeStatus.Complete,
@@ -459,11 +612,14 @@ public static class PdfFilterPipeline
         ReadOnlyMemory<byte> data,
         PdfName filter,
         PdfDictionary? parms,
-        int maxDecodedBytes,
-        out bool limitExceeded,
+        int maxOutputBytes,
+        long maxWorkBytes,
+        bool strict,
+        out PdfBoundedDecodeLimit exceededLimit,
         out bool invalidData,
-        out int producedBytes)
+        out long producedBytes)
     {
+        exceededLimit = PdfBoundedDecodeLimit.None;
         invalidData = false;
         producedBytes = 0;
         int inputCopyBytes = 0;
@@ -471,50 +627,74 @@ public static class PdfFilterPipeline
             !MemoryMarshal.TryGetArray(data, out _))
         {
             inputCopyBytes = data.Length;
-            if (inputCopyBytes >= maxDecodedBytes)
+            bool outputExceeded = inputCopyBytes > maxOutputBytes;
+            bool workExhausted = inputCopyBytes >= maxWorkBytes;
+            if (outputExceeded || workExhausted)
             {
-                limitExceeded = true;
-                return data[..Math.Min(data.Length, maxDecodedBytes)];
+                exceededLimit = workExhausted && (!outputExceeded || maxWorkBytes < maxOutputBytes)
+                    ? PdfBoundedDecodeLimit.Work
+                    : PdfBoundedDecodeLimit.StreamOutput;
+                return data[..Math.Min(data.Length, maxOutputBytes)];
             }
 
             data = data.ToArray();
         }
 
-        int outputBudget = maxDecodedBytes - inputCopyBytes;
+        long decoderWorkBytes = maxWorkBytes - inputCopyBytes;
+        if (decoderWorkBytes <= 0)
+        {
+            exceededLimit = PdfBoundedDecodeLimit.Work;
+            return data;
+        }
+
+        int outputBudget = (int)Math.Min(maxOutputBytes, decoderWorkBytes);
+        bool limitExceeded;
         byte[] decoded;
         switch (filter.Value)
         {
             case "FlateDecode":
             case "Fl":
-                decoded = FlateFilter.Decode(data, outputBudget, out limitExceeded, out invalidData);
+                decoded = strict
+                    ? FlateFilter.Decode(data, outputBudget, out limitExceeded, out invalidData)
+                    : FlateFilter.DecodeCompatible(data, outputBudget, out limitExceeded, out invalidData);
                 break;
 
             case "LZWDecode":
             case "LZW":
-                decoded = LzwFilter.Decode(
-                    data.Span,
-                    parms?.GetInteger(PdfNames.EarlyChange, 1) != 0,
-                    outputBudget,
-                    out limitExceeded,
-                    out invalidData);
+                decoded = strict
+                    ? LzwFilter.Decode(
+                        data.Span,
+                        parms?.GetInteger(PdfNames.EarlyChange, 1) != 0,
+                        outputBudget,
+                        out limitExceeded,
+                        out invalidData)
+                    : LzwFilter.DecodeCompatible(
+                        data.Span,
+                        parms?.GetInteger(PdfNames.EarlyChange, 1) != 0,
+                        outputBudget,
+                        out limitExceeded,
+                        out invalidData);
                 break;
 
             case "ASCII85Decode":
             case "A85":
-                decoded = Ascii85Filter.Decode(
-                    data.Span, outputBudget, out limitExceeded, out invalidData);
+                decoded = strict
+                    ? Ascii85Filter.Decode(data.Span, outputBudget, out limitExceeded, out invalidData)
+                    : Ascii85Filter.DecodeCompatible(data.Span, outputBudget, out limitExceeded, out invalidData);
                 break;
 
             case "ASCIIHexDecode":
             case "AHx":
-                decoded = AsciiHexFilter.Decode(
-                    data.Span, outputBudget, out limitExceeded, out invalidData);
+                decoded = strict
+                    ? AsciiHexFilter.Decode(data.Span, outputBudget, out limitExceeded, out invalidData)
+                    : AsciiHexFilter.DecodeCompatible(data.Span, outputBudget, out limitExceeded, out invalidData);
                 break;
 
             case "RunLengthDecode":
             case "RL":
-                decoded = RunLengthFilter.Decode(
-                    data.Span, outputBudget, out limitExceeded, out invalidData);
+                decoded = strict
+                    ? RunLengthFilter.Decode(data.Span, outputBudget, out limitExceeded, out invalidData)
+                    : RunLengthFilter.DecodeCompatible(data.Span, outputBudget, out limitExceeded, out invalidData);
                 break;
 
             case "BrotliDecode":
@@ -522,42 +702,68 @@ public static class PdfFilterPipeline
                 break;
 
             default: // Crypt is an identity transform after the reader has decrypted the bytes.
-                if (data.Length > maxDecodedBytes)
+                if (data.Length > maxOutputBytes)
                 {
-                    limitExceeded = true;
-                    return data[..maxDecodedBytes];
+                    exceededLimit = PdfBoundedDecodeLimit.StreamOutput;
+                    return data[..maxOutputBytes];
                 }
 
-                limitExceeded = false;
                 return data;
         }
 
-        producedBytes = inputCopyBytes + decoded.Length;
+        producedBytes = (long)inputCopyBytes + decoded.Length;
 
-        if (limitExceeded || invalidData || parms is null)
+        if (limitExceeded)
+        {
+            exceededLimit = decoderWorkBytes < maxOutputBytes
+                ? PdfBoundedDecodeLimit.Work
+                : PdfBoundedDecodeLimit.StreamOutput;
+            return decoded;
+        }
+
+        if (invalidData || parms is null)
             return decoded;
 
         int predictor = (int)parms.GetInteger(PdfNames.Predictor, 1);
         if (predictor <= 1)
             return decoded;
 
-        int predictorBudget = maxDecodedBytes - producedBytes;
-        if (predictorBudget <= 0)
+        long predictorWorkBytes = maxWorkBytes - producedBytes;
+        if (predictorWorkBytes <= 0)
         {
-            limitExceeded = true;
+            exceededLimit = PdfBoundedDecodeLimit.Work;
             return decoded;
         }
 
-        byte[] predicted = Predictor.Undo(
-            decoded,
-            predictor,
-            (int)parms.GetInteger(PdfNames.Colors, 1),
-            (int)parms.GetInteger(PdfNames.BitsPerComponent, 8),
-            (int)parms.GetInteger(PdfNames.Columns, 1),
-            predictorBudget,
-            out limitExceeded,
-            out invalidData);
+        int predictorBudget = (int)Math.Min(maxOutputBytes, predictorWorkBytes);
+
+        byte[] predicted = strict
+            ? Predictor.Undo(
+                decoded,
+                predictor,
+                (int)parms.GetInteger(PdfNames.Colors, 1),
+                (int)parms.GetInteger(PdfNames.BitsPerComponent, 8),
+                (int)parms.GetInteger(PdfNames.Columns, 1),
+                predictorBudget,
+                out limitExceeded,
+                out invalidData)
+            : Predictor.UndoCompatible(
+                decoded,
+                predictor,
+                (int)parms.GetInteger(PdfNames.Colors, 1),
+                (int)parms.GetInteger(PdfNames.BitsPerComponent, 8),
+                (int)parms.GetInteger(PdfNames.Columns, 1),
+                predictorBudget,
+                out limitExceeded,
+                out invalidData);
         producedBytes += predicted.Length;
+        if (limitExceeded)
+        {
+            exceededLimit = predictorWorkBytes < maxOutputBytes
+                ? PdfBoundedDecodeLimit.Work
+                : PdfBoundedDecodeLimit.StreamOutput;
+        }
+
         return predicted;
     }
 }

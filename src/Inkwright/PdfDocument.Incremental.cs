@@ -89,6 +89,312 @@ public sealed partial class PdfDocument
         return buffer.ToArray();
     }
 
+    /// <summary>
+    /// Captures the caller's current document state in a private document suitable for a
+    /// transactional incremental operation. Existing signatures and encryption stay intact.
+    /// </summary>
+    internal PdfDocument CreateIncrementalSnapshot()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        if (_reader is { } sourceReader &&
+            (sourceReader.WasRebuilt || sourceReader.StartXref < 0))
+        {
+            throw UntrustedSnapshotSource();
+        }
+
+        var options = new PdfSaveOptions
+        {
+            UseObjectStreams = false,
+            UpdateModificationDate = false,
+            SetProducer = false,
+        };
+
+        PdfDocument target = _reader is null
+            ? Create()
+            : new PdfDocument(_reader.ReopenIncremental(_reader.FileBytes.ToArray()));
+
+        bool keepTargetAlive = false;
+        try
+        {
+            if (target._reader is { } targetReader &&
+                (targetReader.WasRebuilt || targetReader.StartXref < 0))
+            {
+                throw UntrustedSnapshotSource();
+            }
+
+            CopySnapshotStateTo(target);
+
+            if (target._reader is not null)
+            {
+                keepTargetAlive = true;
+                return target;
+            }
+
+            // A new document has no xref section to append to. Normalize the private copy first;
+            // PrepareForSave is then free to finish fonts and page-tree bookkeeping without
+            // touching the caller-owned document.
+            PdfDocument normalized = Load(target.ToArray(options));
+            normalized.ArchivalClaim = target.ArchivalClaim;
+            normalized.SuppressInformationDictionary = target.SuppressInformationDictionary;
+            return normalized;
+        }
+        finally
+        {
+            // A returned reader-backed snapshot stays alive. A normalized snapshot owns a newly
+            // parsed graph, and every failure path releases the temporary graph here.
+            if (!keepTargetAlive)
+                target.Dispose();
+        }
+    }
+
+    private static InvalidOperationException UntrustedSnapshotSource() =>
+        new(
+            "The source file's cross-reference data was rebuilt or has no trustworthy startxref, " +
+            "so it cannot be captured for a transactional incremental operation.");
+
+    /// <summary>Copies the current in-memory state into an independently parsed document.</summary>
+    private void CopySnapshotStateTo(PdfDocument target)
+    {
+        var copier = new SnapshotValueCopier();
+
+        target._added.Clear();
+        target._addedGenerations.Clear();
+        target._changed.Clear();
+
+        if (_reader is null)
+        {
+            foreach (int number in EnumerateObjectNumbers())
+            {
+                target.SetObject(
+                    new PdfObjectId(number, GenerationOf(number)),
+                    copier.Copy(GetObject(number)));
+            }
+        }
+        else
+        {
+            foreach (KeyValuePair<int, PdfValue> entry in _added)
+            {
+                target.SetObject(
+                    new PdfObjectId(entry.Key, GenerationOf(entry.Key)),
+                    copier.Copy(entry.Value));
+            }
+
+            foreach (int number in _changed)
+            {
+                if (_added.ContainsKey(number))
+                    continue;
+
+                CopyChangedObjectTo(target, number, copier);
+            }
+        }
+
+        target._nextNumber = _nextNumber;
+        target._changed.UnionWith(_changed);
+        target.Version = Version;
+        target.ArchivalClaim = ArchivalClaim;
+        target.SuppressInformationDictionary = SuppressInformationDictionary;
+        target.HadInformationDictionary = HadInformationDictionary;
+        target.CatalogId = CatalogId;
+        target.InfoId = InfoId;
+        target.PageTreeRootId = PageTreeRootId;
+
+        target.Trailer = copier.Copy(PdfValue.Dictionary(Trailer)).AsDictionary!;
+        target.Attach(PdfValue.Dictionary(target.Trailer));
+
+        target.Catalog = SnapshotDictionary(target, CatalogId, Catalog, copier);
+        PdfDictionary info = SnapshotDictionary(target, InfoId, Info.Dictionary, copier);
+        target.Info = new PdfDocumentInfo(info, () => target.MarkChanged(target.InfoId));
+        target.PageTreeRoot = SnapshotDictionary(target, PageTreeRootId, PageTreeRoot, copier);
+
+        var pages = new List<PdfPage>(Pages.Count);
+        foreach (PdfPage page in Pages.Items)
+        {
+            PdfDictionary dictionary = SnapshotDictionary(target, page.Id, page.Dictionary, copier);
+            pages.Add(new PdfPage(target, page.Id, dictionary));
+        }
+
+        target.Pages.ReplaceSnapshot(pages);
+
+        foreach (Fonts.EmbeddedTrueTypeFont font in _embeddedFonts)
+            font.CloneForSnapshot(target);
+    }
+
+    private void CopyChangedObjectTo(PdfDocument target, int number, SnapshotValueCopier copier)
+    {
+        PdfValue source = copier.Copy(GetObject(number));
+        PdfValue destination = target.GetObject(number);
+
+        if (!ReplaceComposite(destination, source))
+        {
+            throw new InvalidOperationException(
+                $"Changed object {number} cannot be copied transactionally because its kind changed " +
+                "without going through PdfDocument.SetObject.");
+        }
+
+        target.MarkChanged(new PdfObjectId(number, target.GenerationOf(number)));
+    }
+
+    private PdfDictionary SnapshotDictionary(
+        PdfDocument target,
+        PdfObjectId id,
+        PdfDictionary source,
+        SnapshotValueCopier copier)
+    {
+        PdfDictionary copy = copier.Copy(PdfValue.Dictionary(source)).AsDictionary!;
+        if (!id.IsValid)
+        {
+            target.Attach(PdfValue.Dictionary(copy));
+            return copy;
+        }
+
+        if (_added.ContainsKey(id.Number))
+            return target.GetObject(id).AsDictionary ?? throw SnapshotKindChanged(id.Number);
+
+        PdfValue destination = target.GetObject(id);
+        if (!ReplaceComposite(destination, PdfValue.Dictionary(copy)))
+            throw SnapshotKindChanged(id.Number);
+
+        return destination.AsDictionary!;
+    }
+
+    private static InvalidOperationException SnapshotKindChanged(int number) =>
+        new($"Object {number} changed kind without going through PdfDocument.SetObject.");
+
+    private static bool ReplaceComposite(PdfValue destination, PdfValue source)
+    {
+        if (destination.Kind != source.Kind)
+            return false;
+
+        switch (source.Kind)
+        {
+            case PdfValueKind.Array:
+                {
+                    PdfArray target = destination.AsArray!;
+                    target.Clear();
+                    target.AddRange(source.AsArray!.AsSpan());
+                    return true;
+                }
+
+            case PdfValueKind.Dictionary:
+                ReplaceDictionary(destination.AsDictionary!, source.AsDictionary!);
+                return true;
+
+            case PdfValueKind.Stream:
+                {
+                    PdfStream target = destination.AsStream!;
+                    PdfStream replacement = source.AsStream!;
+                    ReplaceDictionary(target.Dictionary, replacement.Dictionary);
+                    target.SetRawData(replacement.RawData);
+                    return true;
+                }
+
+            default:
+                // Scalar indirect values cannot be mutated in place; MarkChanged on one therefore
+                // carries no state that differs from the independently parsed source object.
+                return destination == source;
+        }
+    }
+
+    private static void ReplaceDictionary(PdfDictionary target, PdfDictionary source)
+    {
+        PdfName[] keys = target.Keys.ToArray();
+        foreach (PdfName key in keys)
+            target.Remove(key);
+
+        foreach (KeyValuePair<PdfName, PdfValue> entry in source)
+            target.Set(entry.Key, entry.Value);
+    }
+
+    /// <summary>Deep-copies direct containers while preserving indirect object identities.</summary>
+    private sealed class SnapshotValueCopier
+    {
+        private const int MaxDepth = 128;
+        private readonly Dictionary<object, PdfValue> _copies =
+            new(ReferenceEqualityComparer.Instance);
+
+        internal PdfValue Copy(PdfValue value) => Copy(value, 0);
+
+        private PdfValue Copy(PdfValue value, int depth)
+        {
+            if (depth > MaxDepth)
+                throw new InvalidOperationException("The document contains a direct object graph deeper than 128 values.");
+
+            switch (value.Kind)
+            {
+                case PdfValueKind.String:
+                    return PdfValue.String(value.AsStringBytes.ToArray(), value.IsHexString);
+
+                case PdfValueKind.Array:
+                    return CopyArray(value.AsArray!, depth);
+
+                case PdfValueKind.Dictionary:
+                    return CopyDictionary(value.AsDictionary!, depth);
+
+                case PdfValueKind.Stream:
+                    return CopyStream(value.AsStream!, depth);
+
+                default:
+                    return value;
+            }
+        }
+
+        private PdfValue CopyArray(PdfArray source, int depth)
+        {
+            if (_copies.TryGetValue(source, out PdfValue existing))
+                return existing;
+
+            var target = new PdfArray(source.Count);
+            PdfValue value = PdfValue.Array(target);
+            _copies[source] = value;
+            for (int i = 0; i < source.Count; i++)
+                target.Add(Copy(source[i], depth + 1));
+
+            return value;
+        }
+
+        private PdfValue CopyDictionary(PdfDictionary source, int depth)
+        {
+            if (_copies.TryGetValue(source, out PdfValue existing))
+                return existing;
+
+            var target = new PdfDictionary(source.Count);
+            PdfValue value = PdfValue.Dictionary(target);
+            _copies[source] = value;
+            CopyDictionaryEntries(source, target, depth);
+            return value;
+        }
+
+        private PdfValue CopyStream(PdfStream source, int depth)
+        {
+            if (_copies.TryGetValue(source, out PdfValue existing))
+                return existing;
+
+            PdfDictionary dictionary;
+            if (_copies.TryGetValue(source.Dictionary, out PdfValue copiedDictionary))
+            {
+                dictionary = copiedDictionary.AsDictionary!;
+            }
+            else
+            {
+                dictionary = new PdfDictionary(source.Dictionary.Count);
+                _copies[source.Dictionary] = PdfValue.Dictionary(dictionary);
+                CopyDictionaryEntries(source.Dictionary, dictionary, depth);
+            }
+
+            var target = new PdfStream(dictionary, source.RawData.ToArray());
+            PdfValue value = PdfValue.Stream(target);
+            _copies[source] = value;
+            return value;
+        }
+
+        private void CopyDictionaryEntries(PdfDictionary source, PdfDictionary target, int depth)
+        {
+            foreach (KeyValuePair<PdfName, PdfValue> entry in source)
+                target.Set(entry.Key, Copy(entry.Value, depth + 1));
+        }
+    }
+
     /// <summary>The objects an incremental save would write.</summary>
     internal SortedSet<int> ChangedObjectNumbers()
     {
@@ -104,7 +410,7 @@ public sealed partial class PdfDocument
         var trailer = new PdfDictionary(5);
         trailer.Set(PdfNames.Root, PdfValue.Reference(CatalogId));
 
-        if (InfoId.IsValid)
+        if (InfoId.IsValid && !SuppressInformationDictionary)
             trailer.Set(PdfNames.Info, PdfValue.Reference(InfoId));
 
         if (Trailer.TryGetRaw(PdfNames.Encrypt, out PdfValue encrypt) && !encrypt.IsNull)

@@ -145,20 +145,30 @@ public sealed class PdfPage
 
         // The parts are subject to the same expansion cap as a single stream, so a page cannot get
         // around the limit by splitting a decompression bomb across an array.
-        long cap = Filters.PdfFilterLimits.MaxDecodedBytes;
+        PdfEffectiveStreamLimit contentLimit = _document.DecodedStreamLimit;
+        long cap = contentLimit.Value;
         var buffer = new MemoryStream();
+        bool hasPart = false;
 
-        for (int i = 0; i < array.Count && buffer.Length < cap; i++)
+        for (int i = 0; i < array.Count; i++)
         {
             if (array.Get(i).AsStream is not { } part)
                 continue;
 
             ReadOnlySpan<byte> decoded = DecodeContent(part).Span;
-            if (buffer.Length + decoded.Length > cap)
-                decoded = decoded[..(int)(cap - buffer.Length)];
+            long requested = buffer.Length + decoded.Length + (hasPart ? 1L : 0L);
+            if (requested > cap)
+            {
+                throw new Diagnostics.PdfResourceLimitException(
+                    contentLimit.Name,
+                    contentLimit.Limit,
+                    requested);
+            }
 
+            if (hasPart)
+                buffer.WriteByte((byte)'\n');
             buffer.Write(decoded);
-            buffer.WriteByte((byte)'\n');
+            hasPart = true;
         }
 
         return buffer.ToArray();
@@ -282,6 +292,51 @@ public sealed class PdfPage
     /// <param name="comparison">How to compare.</param>
     public IReadOnlyList<Text.PdfTextMatch> FindText(string phrase, StringComparison comparison) =>
         Text.TextSearch.Find(ExtractLetters(), phrase, comparison);
+
+    /// <summary>
+    /// Physically removes text glyphs, images and annotations inside a region of the page and
+    /// paints an opaque redaction overlay in their place (ISO 32000-1 §12.5.6.23).
+    /// </summary>
+    /// <param name="region">The user-space rectangle to redact.</param>
+    /// <param name="options">Visual overlay and removal settings.</param>
+    public PdfRedactionResult Redact(PdfRectangle region, PdfRedactionOptions? options = null) =>
+        Redaction.PdfRedactor.Redact(this, [region], options);
+
+    /// <summary>
+    /// Physically removes text glyphs, images and annotations inside the given regions of the page
+    /// and paints opaque redaction overlays in their place (ISO 32000-1 §12.5.6.23).
+    /// </summary>
+    /// <param name="regions">The user-space rectangles to redact.</param>
+    /// <param name="options">Visual overlay and removal settings.</param>
+    public PdfRedactionResult Redact(IEnumerable<PdfRectangle> regions, PdfRedactionOptions? options = null) =>
+        Redaction.PdfRedactor.Redact(this, regions, options);
+
+    /// <summary>
+    /// Finds every occurrence of a phrase on the page and physically redacts the underlying glyphs.
+    /// </summary>
+    /// <param name="phrase">The text to find and remove.</param>
+    /// <param name="options">Visual overlay and removal settings.</param>
+    /// <param name="comparison">How to compare the text; case-insensitive by default.</param>
+    public PdfRedactionResult RedactText(
+        string phrase,
+        PdfRedactionOptions? options = null,
+        StringComparison comparison = StringComparison.OrdinalIgnoreCase)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(phrase);
+        IReadOnlyList<Text.PdfTextMatch> matches = FindText(phrase, comparison);
+        if (matches.Count == 0)
+            return default;
+
+        return Redact(matches.SelectMany(m => m.Areas), options);
+    }
+
+    /// <summary>
+    /// Applies every <c>/Redact</c> annotation on the page, physically scrubbing the content
+    /// beneath each mark, painting its overlay and removing the annotation itself.
+    /// </summary>
+    /// <param name="options">Fallback visual overlay and removal settings.</param>
+    public PdfRedactionResult ApplyRedactions(PdfRedactionOptions? options = null) =>
+        Redaction.PdfRedactor.ApplyAnnotationRedactions(this, options);
 
     /// <summary>
     /// The transformation from user space to a space with the origin at the top-left corner and the

@@ -18,6 +18,14 @@ public static class AsciiHexFilter
         out bool invalidData) =>
         Decode(data, maxDecodedBytes, strict: true, out limitExceeded, out invalidData);
 
+    /// <summary>Runs the tolerant decoder under an explicit output bound.</summary>
+    internal static byte[] DecodeCompatible(
+        ReadOnlySpan<byte> data,
+        int maxDecodedBytes,
+        out bool limitExceeded,
+        out bool invalidData) =>
+        Decode(data, maxDecodedBytes, strict: false, out limitExceeded, out invalidData);
+
     private static byte[] Decode(
         ReadOnlySpan<byte> data,
         int maxDecodedBytes,
@@ -127,6 +135,14 @@ public static class Ascii85Filter
         out bool limitExceeded,
         out bool invalidData) =>
         Decode(data, maxDecodedBytes, strict: true, out limitExceeded, out invalidData);
+
+    /// <summary>Runs the tolerant decoder under an explicit output bound.</summary>
+    internal static byte[] DecodeCompatible(
+        ReadOnlySpan<byte> data,
+        int maxDecodedBytes,
+        out bool limitExceeded,
+        out bool invalidData) =>
+        Decode(data, maxDecodedBytes, strict: false, out limitExceeded, out invalidData);
 
     private static byte[] Decode(
         ReadOnlySpan<byte> data,
@@ -330,6 +346,14 @@ public static class RunLengthFilter
         out bool limitExceeded,
         out bool invalidData) =>
         Decode(data, maxDecodedBytes, strict: true, out limitExceeded, out invalidData);
+
+    /// <summary>Runs the tolerant decoder under an explicit output bound.</summary>
+    internal static byte[] DecodeCompatible(
+        ReadOnlySpan<byte> data,
+        int maxDecodedBytes,
+        out bool limitExceeded,
+        out bool invalidData) =>
+        Decode(data, maxDecodedBytes, strict: false, out limitExceeded, out invalidData);
 
     private static byte[] Decode(
         ReadOnlySpan<byte> data,

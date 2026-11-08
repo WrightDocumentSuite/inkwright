@@ -105,41 +105,41 @@ internal sealed class PdfObjectImporter(PdfDocument source, PdfDocument target)
         switch (value.Kind)
         {
             case PdfValueKind.Reference:
-            {
-                int number = value.AsReference.Number;
-                if (_map.TryGetValue(number, out PdfObjectId mapped))
-                    return PdfValue.Reference(mapped);
+                {
+                    int number = value.AsReference.Number;
+                    if (_map.TryGetValue(number, out PdfObjectId mapped))
+                        return PdfValue.Reference(mapped);
 
-                // A reference to a page nobody asked for — a link destination, usually. Following it
-                // would copy that page, its content and its resources into the new document.
-                if (_sourcePages.Contains(number))
-                    return PdfValue.Null;
+                    // A reference to a page nobody asked for — a link destination, usually. Following it
+                    // would copy that page, its content and its resources into the new document.
+                    if (_sourcePages.Contains(number))
+                        return PdfValue.Null;
 
-                PdfObjectId id = target.AddObject(PdfValue.Null);
-                _map[number] = id;
-                target.SetObject(id, CopyValue(source.GetObject(number), depth + 1));
-                return PdfValue.Reference(id);
-            }
+                    PdfObjectId id = target.AddObject(PdfValue.Null);
+                    _map[number] = id;
+                    target.SetObject(id, CopyValue(source.GetObject(number), depth + 1));
+                    return PdfValue.Reference(id);
+                }
 
             case PdfValueKind.Array:
-            {
-                PdfArray original = value.AsArray!;
-                var copy = new PdfArray(original.Count);
-                for (int i = 0; i < original.Count; i++)
-                    copy.Add(CopyValue(original[i], depth + 1));
+                {
+                    PdfArray original = value.AsArray!;
+                    var copy = new PdfArray(original.Count);
+                    for (int i = 0; i < original.Count; i++)
+                        copy.Add(CopyValue(original[i], depth + 1));
 
-                return PdfValue.Array(copy);
-            }
+                    return PdfValue.Array(copy);
+                }
 
             case PdfValueKind.Dictionary:
                 return PdfValue.Dictionary(CopyDictionary(value.AsDictionary!, depth));
 
             case PdfValueKind.Stream:
-            {
-                PdfStream original = value.AsStream!;
-                var stream = new PdfStream(CopyDictionary(original.Dictionary, depth), original.RawData);
-                return PdfValue.Stream(stream);
-            }
+                {
+                    PdfStream original = value.AsStream!;
+                    var stream = new PdfStream(CopyDictionary(original.Dictionary, depth), original.RawData);
+                    return PdfValue.Stream(stream);
+                }
 
             default:
                 return value;

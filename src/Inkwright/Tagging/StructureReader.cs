@@ -180,7 +180,7 @@ public sealed class PdfStructureNode
 public static class StructureReader
 {
     /// <summary>How deep the tree may nest before it is taken to be looping.</summary>
-    private const int _maxDepth = 64;
+    private const int MaxDepth = 64;
 
     /// <summary>Reads a document's structure tree.</summary>
     /// <param name="document">The document to read.</param>
@@ -274,7 +274,7 @@ public static class StructureReader
         HashSet<PdfObjectId> visited,
         int depth)
     {
-        if (depth > _maxDepth || value.IsNull)
+        if (depth > MaxDepth || value.IsNull)
             return;
 
         if (value.IsReference && !visited.Add(value.AsReference))
@@ -377,7 +377,7 @@ public static class StructureReader
         string? namespaceName = structureNamespace?.GetTextString(PdfName.Get("NS"));
         var seen = new HashSet<string>(StringComparer.Ordinal);
 
-        for (int depth = 0; depth < _maxDepth; depth++)
+        for (int depth = 0; depth < MaxDepth; depth++)
         {
             string cycleKey = $"{namespaceName}\0{tag}";
             if (!seen.Add(cycleKey))

@@ -16,10 +16,14 @@ internal sealed class TestTimestampAuthority : ITimestampAuthority, IDisposable
     private const string SigningCertificateV2Oid = "1.2.840.113549.1.9.16.2.47";
 
     private readonly X509Certificate2 _certificate;
+    private readonly bool _omitNonce;
+    private readonly bool _corruptSignature;
     private int _serial;
 
-    internal TestTimestampAuthority()
+    internal TestTimestampAuthority(bool omitNonce = false, bool corruptSignature = false)
     {
+        _omitNonce = omitNonce;
+        _corruptSignature = corruptSignature;
         using RSA key = RSA.Create(2048);
         var request = new CertificateRequest(
             "CN=Inkwright Test TSA", key, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
@@ -38,12 +42,16 @@ internal sealed class TestTimestampAuthority : ITimestampAuthority, IDisposable
     /// <summary>How many requests were answered.</summary>
     internal int Requests { get; private set; }
 
+    /// <summary>The nonce carried by the last request.</summary>
+    internal ReadOnlyMemory<byte>? LastNonce { get; private set; }
+
     public byte[] Send(ReadOnlyMemory<byte> request)
     {
         if (!Rfc3161TimestampRequest.TryDecode(request, out Rfc3161TimestampRequest? decoded, out _) || decoded is null)
             throw new InvalidOperationException("The request could not be decoded.");
 
         Requests++;
+        LastNonce = decoded.GetNonce();
 
         byte[] token = BuildToken(decoded);
 
@@ -73,7 +81,17 @@ internal sealed class TestTimestampAuthority : ITimestampAuthority, IDisposable
 
         signer.SignedAttributes.Add(BuildSigningCertificateV2());
         cms.ComputeSignature(signer, silent: true);
-        return cms.Encode();
+        byte[] encoded = cms.Encode();
+        if (!_corruptSignature)
+            return encoded;
+
+        byte[] signature = cms.SignerInfos[0].GetSignature();
+        int offset = encoded.AsSpan().LastIndexOf(signature);
+        if (offset < 0)
+            throw new InvalidOperationException("The test token signature could not be located.");
+
+        encoded[offset + signature.Length / 2] ^= 1;
+        return encoded;
     }
 
     private byte[] BuildTstInfo(Rfc3161TimestampRequest request)
@@ -98,7 +116,7 @@ internal sealed class TestTimestampAuthority : ITimestampAuthority, IDisposable
             writer.WriteInteger(++_serial);
             writer.WriteGeneralizedTime(DateTimeOffset.UtcNow, omitFractionalSeconds: true);
 
-            if (request.GetNonce() is { } nonce)
+            if (!_omitNonce && request.GetNonce() is { } nonce)
                 writer.WriteInteger(nonce.Span);
         }
 

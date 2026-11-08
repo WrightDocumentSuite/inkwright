@@ -89,6 +89,28 @@ public static class PdfSigner
         output.Write(signed);
     }
 
+    /// <summary>
+    /// Signs a document and writes it asynchronously. Timestamp I/O is non-blocking when the
+    /// authority implements <see cref="ITimestampAuthority.SendAsync"/> asynchronously.
+    /// </summary>
+    /// <param name="document">The document to sign.</param>
+    /// <param name="output">Where to write the signed file.</param>
+    /// <param name="options">The certificate, appearance and PAdES level to use.</param>
+    /// <param name="cancellationToken">Stops the timestamp request and output write.</param>
+    public static async Task SignAsync(
+        PdfDocument document,
+        Stream output,
+        PdfSignatureOptions options,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(document);
+        ArgumentNullException.ThrowIfNull(output);
+        ArgumentNullException.ThrowIfNull(options);
+
+        byte[] signed = await SignAsync(document, options, cancellationToken).ConfigureAwait(false);
+        await output.WriteAsync(signed, cancellationToken).ConfigureAwait(false);
+    }
+
     /// <summary>Signs a document and returns the signed file.</summary>
     /// <param name="document">The document to sign.</param>
     /// <param name="options">The certificate, appearance and PAdES level to use.</param>
@@ -135,6 +157,50 @@ public static class PdfSigner
         }
     }
 
+    /// <summary>
+    /// Signs a document asynchronously. Timestamp I/O is non-blocking when the authority implements
+    /// <see cref="ITimestampAuthority.SendAsync"/> asynchronously; local hashing, cryptographic
+    /// signing, and the compatibility fallback to <see cref="ITimestampAuthority.Send"/> remain
+    /// synchronous work. The operation signs a private snapshot and does not mutate
+    /// <paramref name="document"/>.
+    /// </summary>
+    /// <param name="document">The document to sign.</param>
+    /// <param name="options">The certificate, appearance and PAdES level to use.</param>
+    /// <param name="cancellationToken">Stops the timestamp request.</param>
+    /// <exception cref="InvalidOperationException">
+    /// The document was loaded from a source whose cross-reference data had to be rebuilt, so an
+    /// identity-preserving incremental snapshot cannot be made safely.
+    /// </exception>
+    public static async Task<byte[]> SignAsync(
+        PdfDocument document,
+        PdfSignatureOptions options,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(document);
+        ArgumentNullException.ThrowIfNull(options);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        IExternalSigner signer = ResolveSigner(options);
+        RequireSupportedDigest(options.HashAlgorithm);
+        RequireCurveDigestPairing(signer, options);
+        using PdfDocument target = document.CreateIncrementalSnapshot();
+        DeclareExtensions(target, options, signer);
+
+        PdfObjectId signatureId = PrepareField(target, options);
+
+        if (options.AddIntegrityCode)
+            PrepareIntegrity(target, signatureId);
+
+        byte[] file = target.ToIncrementalArray(new PdfSaveOptions
+        {
+            UseObjectStreams = false,
+            UpdateModificationDate = false,
+            SetProducer = false,
+        });
+
+        return await CompleteAsync(file, signer, options, target, cancellationToken).ConfigureAwait(false);
+    }
+
     /// <summary>Signs a file on disk and writes the signed copy next to it.</summary>
     /// <param name="sourcePath">The file to sign.</param>
     /// <param name="destinationPath">Where to write the signed file.</param>
@@ -144,6 +210,48 @@ public static class PdfSigner
         using PdfDocument document = PdfDocument.Load(sourcePath);
         byte[] signed = Sign(document, options);
         File.WriteAllBytes(destinationPath, signed);
+    }
+
+    /// <summary>Signs a file asynchronously and writes the signed copy.</summary>
+    /// <param name="sourcePath">The file to sign.</param>
+    /// <param name="destinationPath">Where to write the signed file.</param>
+    /// <param name="options">The certificate, appearance and PAdES level to use.</param>
+    /// <param name="cancellationToken">Stops the timestamp request and file write.</param>
+    public static async Task SignFileAsync(
+        string sourcePath,
+        string destinationPath,
+        PdfSignatureOptions options,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(sourcePath);
+        ArgumentException.ThrowIfNullOrWhiteSpace(destinationPath);
+        ArgumentNullException.ThrowIfNull(options);
+
+        using PdfDocument document = await PdfDocument
+            .LoadAsync(sourcePath, cancellationToken: cancellationToken)
+            .ConfigureAwait(false);
+        byte[] signed = await SignAsync(document, options, cancellationToken).ConfigureAwait(false);
+
+        string destination = Path.GetFullPath(destinationPath);
+        string? directory = Path.GetDirectoryName(destination);
+        if (string.IsNullOrEmpty(directory))
+            throw new ArgumentException("The destination path has no parent directory.", nameof(destinationPath));
+
+        string temporary = Path.Combine(
+            directory,
+            $".{Path.GetFileName(destination)}.{Guid.NewGuid():N}.tmp");
+
+        try
+        {
+            await File.WriteAllBytesAsync(temporary, signed, cancellationToken).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+            File.Move(temporary, destination, overwrite: true);
+        }
+        finally
+        {
+            if (File.Exists(temporary))
+                File.Delete(temporary);
+        }
     }
 
     private static bool CanAppendTo(PdfDocument document)
@@ -499,5 +607,26 @@ public static class PdfSigner
                 return options.AddIntegrityCode ? Security.PdfMacSigner.Attach(cms, covered, document) : cms;
             },
             $"{nameof(PdfSignatureOptions)}.{nameof(PdfSignatureOptions.SignatureSize)}");
+    }
+
+    private static ValueTask<byte[]> CompleteAsync(
+        byte[] file,
+        IExternalSigner signer,
+        PdfSignatureOptions options,
+        PdfDocument document,
+        CancellationToken cancellationToken)
+    {
+        return SignatureEmbedder.EmbedAsync(
+            file,
+            async (covered, token) =>
+            {
+                byte[] cms = await CmsBuilder
+                    .BuildAsync(covered, options, signer, token)
+                    .ConfigureAwait(false);
+
+                return options.AddIntegrityCode ? Security.PdfMacSigner.Attach(cms, covered, document) : cms;
+            },
+            $"{nameof(PdfSignatureOptions)}.{nameof(PdfSignatureOptions.SignatureSize)}",
+            cancellationToken);
     }
 }

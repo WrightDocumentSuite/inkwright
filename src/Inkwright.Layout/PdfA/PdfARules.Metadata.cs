@@ -7,7 +7,7 @@ namespace Inkwright.Layout;
 internal static partial class PdfARules
 {
     /// <summary>The schemas every conforming reader is expected to know without being told.</summary>
-    private static readonly string[] _knownNamespaces =
+    private static readonly string[] KnownNamespaces =
     [
         "http://purl.org/dc/elements/1.1/",
         "http://ns.adobe.com/xap/1.0/",
@@ -325,7 +325,7 @@ internal static partial class PdfARules
 
         foreach (string used in UsedNamespaces(packet))
         {
-            if (_knownNamespaces.Contains(used, StringComparer.Ordinal) || described.Contains(used))
+            if (KnownNamespaces.Contains(used, StringComparer.Ordinal) || described.Contains(used))
                 continue;
 
             context.Report(clause, $"The metadata uses the schema {used} without describing it as an extension schema.");

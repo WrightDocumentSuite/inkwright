@@ -374,6 +374,50 @@ public sealed class PdfAnnotationCollection : IReadOnlyList<PdfAnnotation>
         return link;
     }
 
+    /// <summary>Adds an internal link over an area of the page that jumps to another page in the document.</summary>
+    /// <param name="bounds">The clickable area.</param>
+    /// <param name="destinationPageIndex">The zero-based destination page index.</param>
+    /// <param name="border">Whether to draw the reader's link border.</param>
+    public PdfLinkAnnotation AddLink(PdfRectangle bounds, int destinationPageIndex, bool border = false)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(destinationPageIndex);
+        ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(destinationPageIndex, _page.Document.Pages.Count);
+
+        var dictionary = new PdfDictionary(6);
+        dictionary.Set(AnnotationNames.Type, PdfValue.Name(AnnotationNames.Annot));
+        dictionary.Set(AnnotationNames.Subtype, PdfValue.Name(PdfName.Get("Link")));
+        dictionary.Set(AnnotationNames.Rect, PdfValue.Array(bounds.ToArray()));
+        dictionary.Set(AnnotationNames.Border, PdfValue.Array(PdfArray.OfNumbers(0, 0, border ? 1 : 0)));
+        dictionary.Set(AnnotationNames.F, PdfValue.Integer((long)PdfAnnotationFlags.Print));
+
+        var link = (PdfLinkAnnotation)Attach(dictionary, withPopup: false);
+        link.LinkTo(destinationPageIndex);
+        return link;
+    }
+
+    /// <summary>
+    /// Marks a rectangle for future redaction with a <c>/Redact</c> annotation (ISO 32000-1
+    /// §12.5.6.23). Call <see cref="PdfPage.ApplyRedactions"/> to physically remove the underlying
+    /// content and burn in the overlay.
+    /// </summary>
+    /// <param name="bounds">The region to mark for removal.</param>
+    /// <param name="overlayText">Optional replacement text to draw once applied.</param>
+    /// <param name="fillColor">The interior fill colour once applied; black when omitted.</param>
+    /// <param name="borderColor">The outline colour of the mark before it is applied.</param>
+    public PdfAnnotation AddRedaction(
+        PdfRectangle bounds,
+        string? overlayText = null,
+        PdfColor? fillColor = null,
+        PdfColor? borderColor = null)
+    {
+        PdfDictionary dictionary = NewMarkup("Redact", bounds, text: null, author: null, borderColor ?? PdfColor.Red);
+        dictionary.Set(AnnotationNames.IC, PdfValue.Array(Components(fillColor ?? PdfColor.Black)));
+        if (!string.IsNullOrEmpty(overlayText))
+            dictionary.Set(PdfName.Get("OverlayText"), PdfValue.TextString(overlayText));
+
+        return Attach(dictionary, withPopup: false, drawNow: false);
+    }
+
     /// <summary>Attaches a file to a point on the page.</summary>
     /// <param name="at">Where the pin sits.</param>
     /// <param name="fileName">The name the file is listed under.</param>

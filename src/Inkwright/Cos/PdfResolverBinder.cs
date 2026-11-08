@@ -23,31 +23,31 @@ internal static class PdfResolverBinder
         switch (value.Kind)
         {
             case PdfValueKind.Array:
-            {
-                PdfArray array = value.AsArray!;
-                if (array.Resolver is not null)
-                    return;
+                {
+                    PdfArray array = value.AsArray!;
+                    if (array.Resolver is not null)
+                        return;
 
-                array.Resolver = resolver;
-                for (int i = 0; i < array.Count; i++)
-                    Bind(array[i], resolver, depth + 1);
+                    array.Resolver = resolver;
+                    for (int i = 0; i < array.Count; i++)
+                        Bind(array[i], resolver, depth + 1);
 
-                break;
-            }
+                    break;
+                }
 
             case PdfValueKind.Dictionary:
             case PdfValueKind.Stream:
-            {
-                PdfDictionary dictionary = value.AsDictionary!;
-                if (dictionary.Resolver is not null)
-                    return;
+                {
+                    PdfDictionary dictionary = value.AsDictionary!;
+                    if (dictionary.Resolver is not null)
+                        return;
 
-                dictionary.Resolver = resolver;
-                foreach (KeyValuePair<PdfName, PdfValue> entry in dictionary)
-                    Bind(entry.Value, resolver, depth + 1);
+                    dictionary.Resolver = resolver;
+                    foreach (KeyValuePair<PdfName, PdfValue> entry in dictionary)
+                        Bind(entry.Value, resolver, depth + 1);
 
-                break;
-            }
+                    break;
+                }
 
             default:
                 break;

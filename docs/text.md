@@ -54,8 +54,10 @@ composite `endchar` names their standard encoding codes, not glyph numbers; code
 Appendix B, names to glyphs via charset (formats 0, 1, and 2), and parts are added to the kept set.
 Parts may themselves be composite, so the search runs to a fixed point.
 
-One limitation remains: for a CID font, local subroutines belong to separate font dictionaries via
-FDSelect and are kept in full; global ones are subsetted there too.
+For a CID-keyed CFF font, each kept glyph is matched to its font dictionary via `FDSelect`
+(formats 0 and 3), each font dictionary's local subroutine index is trimmed independently while
+preserving non-`Private` dictionary entries (`FontName`, `FontMatrix`, and so on), and global
+subroutines are subsetted across the whole program.
 
 The embedding-restriction flag from the `OS/2` table is reported by the library
 (`TrueTypeFont.EmbeddingRestricted`), but the library does not enforce it: license compliance is the
@@ -171,8 +173,8 @@ a Japanese, Chinese, or Korean document whose font has no `ToUnicode` at all.
 Without the package, `Uni*` names are still parsed as two-byte identity: the code space is correct,
 but CIDs equal the codes themselves.
 
-The set covers Adobe-GB1, Adobe-CNS1, Adobe-Japan1, and Adobe-Korea1, including UTF16 variants from
-PDF 2.0. Adobe-KR collections (PDF 2.0) are not in the set.
+The set covers Adobe-GB1, Adobe-CNS1, Adobe-Japan1, Adobe-Korea1, and Adobe-KR (PDF 2.0), including
+UTF16 variants from PDF 2.0.
 
 ## Search
 

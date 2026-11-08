@@ -94,6 +94,34 @@ internal static class EdwardsCms
             : EdwardsCurve.VerifyEd25519(publicKey, message, parts.Signature);
     }
 
+    /// <summary>
+    /// Verifies a non-Edwards CMS signature that uses SHAKE256, which .NET's <c>SignedCms</c>
+    /// cannot check directly because <see cref="Shake256"/> is an XOF rather than a <see cref="HashAlgorithm"/>.
+    /// </summary>
+    internal static bool VerifyShake256(ReadOnlyMemory<byte> cms, ReadOnlySpan<byte> content, X509Certificate2 certificate)
+    {
+        if (!Shake256.IsSupported || !TryReadFirstSigner(cms, out CmsParts parts) || parts.SignedAttributes.IsEmpty)
+            return false;
+
+        byte[] message = parts.SignedAttributes.ToArray();
+        message[0] = 0x31;
+
+        if (ReadMessageDigest(message) is not { } declared ||
+            !declared.AsSpan().SequenceEqual(CmsBuilder.Hash(content, PdfSignatureAlgorithms.Shake256)))
+        {
+            return false;
+        }
+
+        byte[] attrDigest = CmsBuilder.Hash(message, PdfSignatureAlgorithms.Shake256);
+        if (certificate.GetRSAPublicKey() is { } rsa)
+            return rsa.VerifyHash(attrDigest, parts.Signature, HashAlgorithmName.SHA512, RSASignaturePadding.Pkcs1);
+
+        if (certificate.GetECDsaPublicKey() is { } ecdsa)
+            return ecdsa.VerifyHash(attrDigest, parts.Signature);
+
+        return false;
+    }
+
     /// <summary>Reads the CMS signing-time without asking the platform to decode an EdDSA signer.</summary>
     internal static DateTimeOffset? ReadSigningTime(ReadOnlyMemory<byte> cms)
     {

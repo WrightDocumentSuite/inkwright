@@ -1,18 +1,22 @@
 # Benchmarks
 
 ```bash
-dotnet run -c Release --project benchmarks/Inkwright.Benchmarks -- --filter *
+dotnet run -c Release --project benchmarks/Inkwright.Benchmarks -- --filter '*'
 ```
 
 Machine: Intel Core i7-8700, Windows Server 2022, .NET 10.0.10, BenchmarkDotNet 0.15.8. The numbers
-below are from a full run at the released commit, cross-checked against two further runs on the same
-machine; allocation figures reproduce to the byte, timings within the stated deviations. The machine
-hosts other workloads, so treat absolute times as an upper bound and the ratios as the durable part.
+below are a historical snapshot from a full run at the released commit, cross-checked against two
+further runs on the same machine; allocation figures reproduce to the byte, timings within the
+stated deviations. The machine hosts other workloads, so treat absolute times as an upper bound and
+the ratios as durable only for the package versions named below.
 
-Comparison is against [PDFsharp 6.2](https://www.nuget.org/packages/PDFsharp) and
-[PdfPig 0.1.11](https://www.nuget.org/packages/PdfPig) — the only PDF libraries for .NET that can be
+Comparison in this snapshot is against [PDFsharp 6.2.1](https://www.nuget.org/packages/PDFsharp/6.2.1) and
+[PdfPig 0.1.11](https://www.nuget.org/packages/PdfPig/0.1.11) — the only PDF libraries for .NET that can be
 benchmarked side by side without native dependencies or AGPL-licensed code. QuestPDF is not included: it
 pulls in ~50 MB of native Skia per RID, and measuring managed code against it is unfair both ways.
+
+The benchmark project currently pins PDFsharp 6.2.4 and PdfPig 0.1.15. Do not relabel the table with
+those versions until the full run plus two cross-check runs have been repeated on the same host.
 
 ## Report generation
 

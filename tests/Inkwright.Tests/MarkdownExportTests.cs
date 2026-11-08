@@ -1,4 +1,5 @@
 using System.Text;
+using Inkwright.Annotations;
 using Inkwright.Content;
 using Inkwright.Cos;
 using Inkwright.Fonts;
@@ -296,6 +297,41 @@ public class MarkdownExportTests
 
         Assert.Equal("semantic \\[text\\]\n", markdown.Text);
         Assert.Empty(markdown.Diagnostics);
+    }
+
+    [Fact]
+    public void GoToActionLinkIsDiagnosedAsInternalLinkInMarkdownExport()
+    {
+        using var document = PdfDocument.Create();
+        PdfPage page1 = document.Pages.Add(PageSize.A4);
+        PdfPage page2 = document.Pages.Add(PageSize.A4);
+
+        AddHelvetica(document, page1);
+        page1.SetContent(Encoding.ASCII.GetBytes(
+            "/Link <</MCID 0>> BDC BT /F1 12 Tf 72 720 Td (Jump to page 2) Tj ET EMC\n"));
+
+        PdfLinkAnnotation link = page1.Annotations.AddLink(new PdfRectangle(72, 710, 180, 730), "https://example.org");
+        var destination = new PdfArray(2);
+        destination.Add(PdfValue.Reference(page2.Id));
+        destination.Add(PdfValue.Name(PdfName.Get("Fit")));
+        var action = new PdfDictionary(2);
+        action.Set(PdfName.Get("S"), PdfValue.Name(PdfName.Get("GoTo")));
+        action.Set(PdfName.Get("D"), PdfValue.Array(destination));
+        link.Dictionary.Set(PdfName.Get("A"), PdfValue.Dictionary(action));
+
+        var tree = new StructureTreeBuilder(document);
+        StructureElement root = tree.AddRoot("Document");
+        StructureElement paragraph = root.Add("P");
+        StructureElement linkElem = paragraph.Add("Link");
+        linkElem.AddContent(page1.Id, 0);
+        linkElem.AddAnnotation(link);
+        tree.Build();
+
+        MarkdownDocument markdown = document.ToMarkdown();
+        Assert.Equal("Jump to page 2\n", markdown.Text);
+        MarkdownExportWarning warning = Assert.Single(markdown.Diagnostics);
+        Assert.Equal(MarkdownExportWarningKind.StructureApproximated, warning.Kind);
+        Assert.Equal("Internal link", warning.Subject);
     }
 
     [Fact]

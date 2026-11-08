@@ -1,0 +1,91 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+  DOTNET_NOLOGO: '1'
+  NUGET_XMLDOC_MODE: skip
+
+jobs:
+  build-and-test:
+    name: Build and test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - windows-latest
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install .NET SDK from global.json
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+
+      - name: Verify SDK feature band
+        shell: pwsh
+        run: |
+          $sdkVersion = (dotnet --version).Trim()
+          if ($sdkVersion -notmatch '^10\.0\.4[0-9]{2}$') {
+            throw "Expected a .NET 10.0.4xx SDK, selected $sdkVersion."
+          }
+
+      - name: Restore
+        run: dotnet restore Inkwright.slnx --locked-mode
+
+      - name: Build
+        run: dotnet build Inkwright.slnx --configuration Release --no-restore -p:ContinuousIntegrationBuild=true
+
+      - name: Test public suite
+        run: dotnet test Inkwright.slnx --configuration Release --no-build --no-restore
+
+      - name: Audit vulnerable and deprecated packages
+        if: runner.os == 'Linux'
+        shell: pwsh
+        run: ./.github/scripts/Test-PackageHealth.ps1 -Solution Inkwright.slnx
+
+  fuzz-seed-replay:
+    name: Replay fuzz regression seeds
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install .NET SDK from global.json
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+
+      - name: Restore fuzz harness
+        run: dotnet restore fuzz/Inkwright.Fuzz/Inkwright.Fuzz.csproj --locked-mode
+
+      - name: Build fuzz harness
+        run: dotnet build fuzz/Inkwright.Fuzz/Inkwright.Fuzz.csproj --configuration Release --no-restore -p:ContinuousIntegrationBuild=true
+
+      - name: Replay committed seeds
+        shell: pwsh
+        run: ./.github/scripts/Replay-FuzzSeeds.ps1

@@ -11,6 +11,7 @@
     <InternalsVisibleTo Include="Inkwright.Signing" />
     <InternalsVisibleTo Include="Inkwright.Signing.Tests" />
     <InternalsVisibleTo Include="Inkwright.Benchmarks" />
+    <InternalsVisibleTo Include="Inkwright.Fuzz" />
   </ItemGroup>
 
   <PropertyGroup>

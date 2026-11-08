@@ -1,6 +1,7 @@
-using Inkwright.Filters;
-using Inkwright.Diagnostics;
 using System.Runtime.ExceptionServices;
+using Inkwright.Diagnostics;
+using Inkwright.Filters;
+using Inkwright.IO;
 
 namespace Inkwright.Cos;
 
@@ -11,18 +12,18 @@ namespace Inkwright.Cos;
 internal interface IPdfStreamDecodePolicy
 {
     /// <summary>Maximum xref/object-stream entries the protected reader may materialize.</summary>
-    int MaxStructuralEntries { get; }
+    public int MaxStructuralEntries { get; }
 
     /// <summary>Charges xref and object-stream entry allocations across the validation tree.</summary>
-    void ConsumeStructuralEntries(int count);
+    public void ConsumeStructuralEntries(int count);
 
     /// <summary>Charges values before the protected reader allocates parser containers.</summary>
-    void ConsumeParsedValues(int count);
+    public void ConsumeParsedValues(int count);
 
-    ReadOnlyMemory<byte> Decode(PdfStream stream, out PdfName? undecodedFilter);
+    public ReadOnlyMemory<byte> Decode(PdfStream stream, out PdfName? undecodedFilter);
 
     /// <summary>Strictly decodes a stream under an additional caller-supplied output bound.</summary>
-    PdfBoundedDecodeResult DecodeBounded(PdfStream stream, int maxDecodedBytes);
+    public PdfBoundedDecodeResult DecodeBounded(PdfStream stream, int maxDecodedBytes);
 }
 
 /// <summary>
@@ -32,10 +33,12 @@ internal interface IPdfStreamDecodePolicy
 /// </summary>
 public sealed class PdfStream
 {
+    private readonly object _decodeGate = new();
     private ReadOnlyMemory<byte> _raw;
     private ReadOnlyMemory<byte>? _decoded;
     private PdfName? _undecodedFilter;
     private readonly IPdfStreamDecodePolicy? _decodePolicy;
+    private readonly PdfResourceBudget? _resourceBudget;
     private bool _decodedByPolicy;
     private ExceptionDispatchInfo? _decodePolicyFailure;
 
@@ -55,12 +58,14 @@ public sealed class PdfStream
     internal PdfStream(
         PdfDictionary dictionary,
         ReadOnlyMemory<byte> rawData,
-        IPdfStreamDecodePolicy? decodePolicy)
+        IPdfStreamDecodePolicy? decodePolicy,
+        PdfResourceBudget? resourceBudget = null)
     {
         ArgumentNullException.ThrowIfNull(dictionary);
         Dictionary = dictionary;
         _raw = rawData;
         _decodePolicy = decodePolicy;
+        _resourceBudget = resourceBudget;
     }
 
     /// <summary>The stream dictionary, holding at least <c>Length</c> and any <c>Filter</c>.</summary>
@@ -80,8 +85,11 @@ public sealed class PdfStream
     {
         get
         {
-            _ = Decode();
-            return _undecodedFilter;
+            lock (_decodeGate)
+            {
+                _ = Decode();
+                return _undecodedFilter;
+            }
         }
     }
 
@@ -92,35 +100,43 @@ public sealed class PdfStream
     /// <returns>The decoded bytes, or the bytes as far as the pipeline got.</returns>
     public ReadOnlyMemory<byte> Decode()
     {
-        if (_decoded is { } cached)
-            return cached;
-
-        _decodePolicyFailure?.Throw();
-
-        ReadOnlyMemory<byte> result;
-        if (_decodePolicy is null)
+        lock (_decodeGate)
         {
-            result = PdfFilterPipeline.Decode(_raw, Dictionary, out _undecodedFilter);
-            _decodedByPolicy = false;
-        }
-        else
-        {
+            if (_decoded is { } cached)
+                return cached;
+
+            _decodePolicyFailure?.Throw();
+
+            ReadOnlyMemory<byte> result;
             try
             {
-                result = _decodePolicy.Decode(this, out _undecodedFilter);
-                _decodedByPolicy = true;
+                if (_decodePolicy is not null)
+                {
+                    result = _decodePolicy.Decode(this, out _undecodedFilter);
+                    _decodedByPolicy = true;
+                }
+                else if (_resourceBudget is not null)
+                {
+                    result = _resourceBudget.Decode(this, out _undecodedFilter);
+                    _decodedByPolicy = false;
+                }
+                else
+                {
+                    result = PdfFilterPipeline.Decode(_raw, Dictionary, out _undecodedFilter);
+                    _decodedByPolicy = false;
+                }
             }
-            catch (PdfFormatException exception)
+            catch (Exception exception) when (exception is PdfFormatException or PdfResourceLimitException)
             {
-                // A lazy object may be reached through several graph paths. Re-throw the same
-                // policy failure without charging its raw bytes or decode work again.
+                // A lazy object may be reached through several graph paths. Re-throw the same failure
+                // without charging its raw bytes or decode work again.
                 _decodePolicyFailure = ExceptionDispatchInfo.Capture(exception);
                 throw;
             }
-        }
 
-        _decoded = result;
-        return result;
+            _decoded = result;
+            return result;
+        }
     }
 
     /// <summary>
@@ -138,55 +154,58 @@ public sealed class PdfStream
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxDecodedBytes);
 
-        // SetData caches the plaintext that matched the dictionary at that instant, but callers
-        // can subsequently mutate Filter or DecodeParms through the public Dictionary property.
-        // A protected read may reuse only bytes produced by that same policy; every other cache
-        // is re-decoded from the raw payload and the dictionary as they exist now.
-        if (_decoded is { } cached && _decodedByPolicy)
+        lock (_decodeGate)
         {
-            if (cached.Length > maxDecodedBytes)
+            // SetData caches the plaintext that matched the dictionary at that instant, but callers
+            // can subsequently mutate Filter or DecodeParms through the public Dictionary property.
+            // A protected read may reuse only bytes produced by that same policy; every other cache
+            // is re-decoded from the raw payload and the dictionary as they exist now.
+            if (_decoded is { } cached && _decodedByPolicy)
             {
+                if (cached.Length > maxDecodedBytes)
+                {
+                    return new PdfBoundedDecodeResult(
+                        cached[..maxDecodedBytes],
+                        PdfBoundedDecodeStatus.LimitExceeded);
+                }
+
                 return new PdfBoundedDecodeResult(
-                    cached[..maxDecodedBytes],
-                    PdfBoundedDecodeStatus.LimitExceeded);
+                    cached,
+                    _undecodedFilter is null
+                        ? PdfBoundedDecodeStatus.Complete
+                        : PdfBoundedDecodeStatus.UndecodedFilter,
+                    _undecodedFilter);
             }
 
-            return new PdfBoundedDecodeResult(
-                cached,
-                _undecodedFilter is null
-                    ? PdfBoundedDecodeStatus.Complete
-                    : PdfBoundedDecodeStatus.UndecodedFilter,
-                _undecodedFilter);
-        }
+            _decodePolicyFailure?.Throw();
 
-        _decodePolicyFailure?.Throw();
-
-        PdfBoundedDecodeResult result;
-        if (_decodePolicy is null)
-        {
-            result = DecodeBounded(maxDecodedBytes);
-        }
-        else
-        {
-            try
+            PdfBoundedDecodeResult result;
+            if (_decodePolicy is null)
             {
-                result = _decodePolicy.DecodeBounded(this, maxDecodedBytes);
+                result = DecodeBounded(maxDecodedBytes);
             }
-            catch (PdfFormatException exception)
+            else
             {
-                _decodePolicyFailure = ExceptionDispatchInfo.Capture(exception);
-                throw;
+                try
+                {
+                    result = _decodePolicy.DecodeBounded(this, maxDecodedBytes);
+                }
+                catch (PdfFormatException exception)
+                {
+                    _decodePolicyFailure = ExceptionDispatchInfo.Capture(exception);
+                    throw;
+                }
             }
-        }
 
-        if (result.Status == PdfBoundedDecodeStatus.Complete)
-        {
-            _decoded = result.Data;
-            _undecodedFilter = null;
-            _decodedByPolicy = _decodePolicy is not null;
-        }
+            if (result.Status == PdfBoundedDecodeStatus.Complete)
+            {
+                _decoded = result.Data;
+                _undecodedFilter = null;
+                _decodedByPolicy = _decodePolicy is not null;
+            }
 
-        return result;
+            return result;
+        }
     }
 
     /// <summary>
@@ -195,19 +214,22 @@ public sealed class PdfStream
     /// </summary>
     internal bool TryGetPolicyDecoded(out PdfBoundedDecodeResult result)
     {
-        if (!_decodedByPolicy || _decoded is not { } decoded)
+        lock (_decodeGate)
         {
-            result = default;
-            return false;
-        }
+            if (!_decodedByPolicy || _decoded is not { } decoded)
+            {
+                result = default;
+                return false;
+            }
 
-        result = new PdfBoundedDecodeResult(
-            decoded,
-            _undecodedFilter is null
-                ? PdfBoundedDecodeStatus.Complete
-                : PdfBoundedDecodeStatus.UndecodedFilter,
-            _undecodedFilter);
-        return true;
+            result = new PdfBoundedDecodeResult(
+                decoded,
+                _undecodedFilter is null
+                    ? PdfBoundedDecodeStatus.Complete
+                    : PdfBoundedDecodeStatus.UndecodedFilter,
+                _undecodedFilter);
+            return true;
+        }
     }
 
     /// <summary>Decodes the payload and returns it as a span.</summary>
@@ -219,12 +241,15 @@ public sealed class PdfStream
     /// <param name="rawData">The encoded payload.</param>
     public void SetRawData(ReadOnlyMemory<byte> rawData)
     {
-        _raw = rawData;
-        _decoded = null;
-        _undecodedFilter = null;
-        _decodedByPolicy = false;
-        _decodePolicyFailure = null;
-        Dictionary.Set(PdfNames.Length, PdfValue.Integer(rawData.Length));
+        lock (_decodeGate)
+        {
+            _raw = rawData;
+            _decoded = null;
+            _undecodedFilter = null;
+            _decodedByPolicy = false;
+            _decodePolicyFailure = null;
+            Dictionary.Set(PdfNames.Length, PdfValue.Integer(rawData.Length));
+        }
     }
 
     /// <summary>
@@ -235,25 +260,28 @@ public sealed class PdfStream
     /// <param name="compress">Whether to deflate the payload.</param>
     public void SetData(ReadOnlyMemory<byte> data, bool compress = true)
     {
-        Dictionary.Remove(PdfNames.DecodeParms);
-
-        if (compress)
+        lock (_decodeGate)
         {
-            byte[] deflated = FlateFilter.Encode(data.Span);
-            Dictionary.Set(PdfNames.Filter, PdfValue.Name(PdfNames.FlateDecode));
-            _raw = deflated;
-        }
-        else
-        {
-            Dictionary.Remove(PdfNames.Filter);
-            _raw = data;
-        }
+            Dictionary.Remove(PdfNames.DecodeParms);
 
-        Dictionary.Set(PdfNames.Length, PdfValue.Integer(_raw.Length));
-        _decoded = data;
-        _undecodedFilter = null;
-        _decodedByPolicy = false;
-        _decodePolicyFailure = null;
+            if (compress)
+            {
+                byte[] deflated = FlateFilter.Encode(data.Span);
+                Dictionary.Set(PdfNames.Filter, PdfValue.Name(PdfNames.FlateDecode));
+                _raw = deflated;
+            }
+            else
+            {
+                Dictionary.Remove(PdfNames.Filter);
+                _raw = data;
+            }
+
+            Dictionary.Set(PdfNames.Length, PdfValue.Integer(_raw.Length));
+            _decoded = data;
+            _undecodedFilter = null;
+            _decodedByPolicy = false;
+            _decodePolicyFailure = null;
+        }
     }
 
     /// <summary>Creates a stream holding the given plaintext payload.</summary>

@@ -189,7 +189,7 @@ public sealed partial record FieldFormat
 
         char point = (periods, commas) switch
         {
-            (> 0, > 0) => value.LastIndexOf('.') > value.LastIndexOf(',') ? '.' : ',',
+            ( > 0, > 0) => value.LastIndexOf('.') > value.LastIndexOf(',') ? '.' : ',',
             (1, 0) => '.',
             (0, 1) => ',',
             _ => '\0',

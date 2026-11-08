@@ -1,7 +1,7 @@
-using Inkwright.Security;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
+using Inkwright.Security;
 using Xunit;
 
 namespace Inkwright.Tests;

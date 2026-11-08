@@ -142,4 +142,11 @@ public sealed class PdfPageCollection : IReadOnlyList<PdfPage>
     IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
 
     internal IReadOnlyList<PdfPage> Items => _pages;
+
+    /// <summary>Replaces the model-only page order while building an isolated document snapshot.</summary>
+    internal void ReplaceSnapshot(List<PdfPage> pages)
+    {
+        _pages.Clear();
+        _pages.AddRange(pages);
+    }
 }

@@ -5,7 +5,7 @@ namespace Inkwright.Layout;
 
 internal static partial class PdfARules
 {
-    private static readonly string[] _renderingIntents =
+    private static readonly string[] RenderingIntents =
         ["RelativeColorimetric", "AbsoluteColorimetric", "Perceptual", "Saturation"];
 
     /// <summary>Clause 6.2: output intent, colour, graphics state, images, transparency.</summary>
@@ -131,7 +131,7 @@ internal static partial class PdfARules
     {
         // Part 4 no longer carries the rendering-intent restriction that parts 1 to 3 stated
         // explicitly. PDF 2.0 validity belongs to the base-format validator, not a made-up 6.2.6.
-        if (context.Part == 4 || intent is null || _renderingIntents.Contains(intent, StringComparer.Ordinal))
+        if (context.Part == 4 || intent is null || RenderingIntents.Contains(intent, StringComparer.Ordinal))
             return;
 
         context.Report(

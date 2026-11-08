@@ -25,6 +25,14 @@ public static class FlateFilter
         out bool invalidData) =>
         Decode(data, maxDecodedBytes, strict: true, out limitExceeded, out invalidData);
 
+    /// <summary>Runs the tolerant decoder under an explicit output bound.</summary>
+    internal static byte[] DecodeCompatible(
+        ReadOnlyMemory<byte> data,
+        int maxDecodedBytes,
+        out bool limitExceeded,
+        out bool invalidData) =>
+        Decode(data, maxDecodedBytes, strict: false, out limitExceeded, out invalidData);
+
     private static byte[] Decode(
         ReadOnlyMemory<byte> data,
         int maxDecodedBytes,

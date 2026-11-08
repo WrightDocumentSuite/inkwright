@@ -45,6 +45,14 @@ public sealed class PdfReadOptions
     public int MaxWarnings { get; init; } = 1000;
 
     /// <summary>
+    /// Per-document bounds for buffered input, object structure, parsing and stream decoding.
+    /// Defaults to <see cref="PdfResourceLimits.Default"/>. Set to <see langword="null"/> only
+    /// when legacy unbounded structural behaviour is required for a trusted file; the process-wide
+    /// <see cref="Filters.PdfFilterLimits.MaxDecodedBytes"/> stream cap still applies.
+    /// </summary>
+    public PdfResourceLimits? ResourceLimits { get; init; } = PdfResourceLimits.Default;
+
+    /// <summary>
     /// Internal fail-closed decoding hook used when recursively opening an untrusted embedded PDF.
     /// Normal public reads leave it unset and keep the tolerant decoder.
     /// </summary>

@@ -1,10 +1,10 @@
+using System.Text;
 using Inkwright.Annotations;
 using Inkwright.Content;
 using Inkwright.Cos;
 using Inkwright.Layout;
 using Inkwright.Metadata;
 using Inkwright.Tagging;
-using System.Text;
 using Xunit;
 
 namespace Inkwright.Layout.Tests;
