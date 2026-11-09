@@ -124,3 +124,7 @@ Deletion is cascading: `note.Delete()` removes the popup and the entire reply th
 - [Signing](signing.md) — PAdES, timestamps, external keys
 - [Archival Documents](archival.md) — tags, PDF/A, Factur-X
 - [Benchmarks](benchmarks.md)
+
+## More runnable examples
+
+See the [sample catalog](../samples/README.md) for merge / split, bookmarks / files, encryption, expected output files and run instructions. Each new example creates its own input and verifies the saved result.

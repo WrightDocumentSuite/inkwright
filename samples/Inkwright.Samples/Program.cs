@@ -30,6 +30,9 @@ Extraction.Report(Path.Combine(output, "invoice.pdf"));
 Forms.Write(Path.Combine(output, "application-form.pdf"));
 Archival.Write(Path.Combine(output, "archival.pdf"));
 
+await MergeAndSplit.RunAsync(output);
+await NavigationAndAttachments.RunAsync(output);
+await PasswordProtection.RunAsync(output);
 Console.WriteLine("Done.");
 
 namespace Inkwright.Samples
