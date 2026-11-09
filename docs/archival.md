@@ -141,8 +141,10 @@ dotnet run --project .github/verapdf-samples/VeraPdfSamples.csproj -c Release --
 
 Java and an embeddable Arial or DejaVu Sans font are required. All eleven samples must be present;
 an execution error, missing report or unexplained noncompliant result fails the gate. XML reports
-are saved under the work directory's `reports/` and uploaded by CI even after a failure. Validation
-on 2026-11-09 exposed a CIDSet error: preserving TrueType glyph indices leaves empty glyphs in the
+are saved under the work directory's `reports/` and uploaded by CI even after a failure.
+The gate self-test exits explicitly after its expected-failure cases, because the Actions PowerShell
+wrapper otherwise propagates the last negative test's native exit code.
+Validation on 2026-11-09 exposed a CIDSet error: preserving TrueType glyph indices leaves empty glyphs in the
 program, so its CIDSet must include those indices as well as glyphs with outlines. The regression
 test compares the declaration against the embedded program's glyph count.
 

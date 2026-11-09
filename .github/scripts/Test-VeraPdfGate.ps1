@@ -70,3 +70,6 @@ finally {
         [IO.Path]::GetFileName($resolved) -notlike 'verapdf-gate-*') { throw 'Unexpected test cleanup path.' }
     Remove-Item -LiteralPath $resolved -Recurse -Force
 }
+
+# Actions' pwsh wrapper forwards LASTEXITCODE, including the final expected CLI failure.
+exit 0
