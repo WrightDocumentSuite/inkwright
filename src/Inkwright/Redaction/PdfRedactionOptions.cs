@@ -52,9 +52,15 @@ public readonly record struct PdfRedactionResult(
     int ImagesRemoved,
     int AnnotationsRemoved)
 {
+    /// <summary>
+    /// How many <c>ActualText</c>, <c>Alt</c> and <c>E</c> entries were removed because the content
+    /// they describe was redacted, from marked-content property lists and structure elements alike.
+    /// </summary>
+    public int SemanticEntriesRemoved { get; init; }
+
     /// <summary>Whether the redaction pass modified any content or annotations.</summary>
     public bool HasChanges =>
-        RegionsApplied > 0 || GlyphsRemoved > 0 || ImagesRemoved > 0 || AnnotationsRemoved > 0;
+        RegionsApplied > 0 || GlyphsRemoved > 0 || ImagesRemoved > 0 || AnnotationsRemoved > 0 || SemanticEntriesRemoved > 0;
 
     /// <summary>Combines the counts of two redaction results.</summary>
     /// <param name="other">The result to add to this one.</param>
@@ -62,5 +68,23 @@ public readonly record struct PdfRedactionResult(
         RegionsApplied + other.RegionsApplied,
         GlyphsRemoved + other.GlyphsRemoved,
         ImagesRemoved + other.ImagesRemoved,
-        AnnotationsRemoved + other.AnnotationsRemoved);
+        AnnotationsRemoved + other.AnnotationsRemoved)
+    {
+        SemanticEntriesRemoved = SemanticEntriesRemoved + other.SemanticEntriesRemoved,
+    };
+}
+
+/// <summary>
+/// Raised when content on a page cannot be checked against the redaction regions, for example text
+/// in a font that cannot be resolved or Form XObjects nested beyond the supported depth. Returning
+/// normally would imply the regions are clean, so the operation refuses instead. The page that
+/// failed keeps its content; do not save the document as if it had been redacted.
+/// </summary>
+public sealed class PdfRedactionException : Exception
+{
+    /// <summary>Creates the exception.</summary>
+    /// <param name="message">What could not be checked.</param>
+    public PdfRedactionException(string message) : base(message)
+    {
+    }
 }

@@ -61,6 +61,9 @@ public static class PdfUaProfile
         ArgumentNullException.ThrowIfNull(document);
         ArgumentException.ThrowIfNullOrWhiteSpace(title);
 
+        if (conformance.Part == 2)
+            PreparePartTwo(document);
+
         // The reader has to be told to show the title rather than the file name (clause 7.1).
         PdfDictionary preferences = Ensure(document, document.Catalog, PdfName.Get("ViewerPreferences"));
         preferences.Set(PdfName.Get("DisplayDocTitle"), PdfValue.Boolean(true));
@@ -82,6 +85,33 @@ public static class PdfUaProfile
         metadata.CopyFrom(document.Info);
         metadata.Title = title;
         metadata.ApplyTo(document);
+    }
+
+    private static void PreparePartTwo(PdfDocument document)
+    {
+        document.Version = PdfVersion.Max(document.Version, PdfVersion.Pdf20);
+
+        // Document has the same meaning in both standard namespaces. Only supply a missing
+        // namespace on that root; an explicit namespace or an arbitrary tree needs review.
+        IReadOnlyList<Tagging.PdfStructureNode> roots = Tagging.StructureReader.Read(document);
+        if (roots.Count != 1 || roots[0].Tag != "Document" ||
+            !roots[0].Dictionary.Get(PdfName.Get("NS")).IsNull)
+            return;
+
+        PdfDictionary root = roots[0].TreeRoot;
+        var structureNamespace = new PdfDictionary(2);
+        structureNamespace.Set(PdfNames.Type, PdfValue.Name(PdfName.Get("Namespace")));
+        structureNamespace.Set(PdfName.Get("NS"), PdfValue.TextString(PdfUaRules.Pdf20Namespace));
+        PdfValue reference = PdfValue.Reference(document.AddObject(PdfValue.Dictionary(structureNamespace)));
+        PdfArray namespaces = root.GetArray(PdfName.Get("Namespaces")) ?? new PdfArray();
+        namespaces.Add(reference);
+        root.Set(PdfName.Get("Namespaces"), PdfValue.Array(namespaces));
+        roots[0].Dictionary.Set(PdfName.Get("NS"), reference);
+        document.MarkChanged(roots[0].Id);
+        PdfValue tree = document.Catalog.Get(PdfName.Get("StructTreeRoot"));
+        if (tree.IsReference)
+            document.MarkChanged(tree.AsReference);
+        document.InvalidateStructure();
     }
 
     private static PdfDictionary Ensure(PdfDocument document, PdfDictionary parent, PdfName key)

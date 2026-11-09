@@ -350,7 +350,15 @@ public sealed class EmbeddedTrueTypeFont : PdfFont
 
         // PDF/A-1 requires a subset CID font to say which CIDs its program defines, and every part
         // requires the statement to be exact once it is made. Identity mapping makes CID and glyph
-        // index the same number, so the set the subsetter kept is the set to declare.
+        // index the same number. TrueType subsetting retains maxp.numGlyphs and empty loca
+        // entries to preserve those indices: even an empty glyph is still in the program.
+        if (!_font.IsCompactFontFormat)
+        {
+            present.Clear();
+            for (int glyph = 0; glyph < _font.GlyphCount; glyph++)
+                present.Add((ushort)glyph);
+        }
+
         var cidSet = PdfStream.FromData(BuildCidSet(present));
         _descriptor.Set(PdfNames.CIDSet, PdfValue.Reference(Document.AddObject(PdfValue.Stream(cidSet))));
     }

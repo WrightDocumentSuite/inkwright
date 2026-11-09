@@ -292,6 +292,12 @@ document.Save("sanitized.pdf", new PdfSaveOptions { RemoveUnusedObjects = true }
 
 Character codes whose bounding boxes intersect a redaction rectangle are stripped from `Tj`, `TJ`, `'`, and `"` operators and replaced by exact `TJ` positioning adjustments so surviving text on the same line does not shift. Intersecting inline images, image XObjects (plus unreferenced `/XObject` resource entries), and annotations are removed before painting the redaction box as an `/Artifact`. Always save with ` Save(...)` (full rewrite) and `RemoveUnusedObjects = true` rather than `SaveIncremental`, because an incremental update appends to the file without erasing earlier revisions.
 
+Text alternatives go with the content they describe. `ActualText`, `Alt` and `E` are removed from each marked-content sequence containing a removed glyph or image, and from the structure element that owns it plus that element's ancestors, because they restate the removed content and nothing maps their characters to individual glyphs. After a partial overlap, extraction therefore falls back to the surviving glyphs. `PdfRedactionResult.SemanticEntriesRemoved` counts the entries removed.
+
+Redaction is local to the placement it selects. A Form XObject drawn on several pages, or twice on one page, is copied for the placement that changes; the others keep the original. To remove something everywhere it appears, use `document.RedactText`, which visits every page; nothing changes a shared object for all its placements at once. A form nothing else draws keeps its object number, so structure references to it stay valid. Shared resource dictionaries lose an entry only once no content stream still uses it.
+
+When content cannot be checked against the regions, the operation throws `PdfRedactionException` and leaves that page's content as it was: text in a font that cannot be resolved, Form XObjects nested more than 12 levels deep or drawing themselves. Treat this as a failed redaction and do not publish the file. Text inside tiling patterns and Type 3 glyph procedures is not examined, and outlines, metadata and attachments are outside the operation.
+
 ## How Pages Are Named
 
 Page number and page label are different things. A document whose front matter runs i, ii, iii and the main body starts again at one says so here; a viewer showing "page 3 of 40" shows exactly that, not the index.

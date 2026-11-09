@@ -286,9 +286,12 @@ When a document is signed twice, the first signature honestly reports that it no
 
 `PdfSignatureInfo` distinguishes document timestamps (`IsDocumentTimestamp`) from certification signatures (`CertificationLevel`) and exposes any `FieldMDP` lock dictionary (`FieldLock`). Embedded signature timestamp is verified for real — `TimestampIntact` says whether the RFC 3161 token and its own signature matched, not merely whether it parsed.
 
+`IsIntact` and `AreSubsequentChangesPermitted` answer different questions, and neither implies the other. `IsIntact` says the signed bytes still match the signature; it stays true when later revisions change the document, because those revisions are outside the signed range. `AreSubsequentChangesPermitted` says whether those later revisions stayed within what the signature allows. Check both, plus `CoversWholeDocument` when the document must be exactly what was signed. `IsValid` requires the signature to cover the whole file, so it is false for any document with later revisions, permitted or not.
+
 When incremental updates follow a signature (`CoversWholeDocument == false`), the verifier compares the signed revision snapshot against the final document and populates `AreSubsequentChangesPermitted` and `ModificationViolations`:
 
 - **`DocMDP` (§12.8.2.2)**:
+  - At every level the comparison covers the page's effective resource graph, not only its content stream: a Form XObject, image, font or transparency resource changed behind an unchanged content stream is a violation.
   - `NoChanges` (`P = 1`): any subsequent modification (other than a pure document timestamp or `/DSS` store) is reported as a violation.
   - `FormFilling` (`P = 2`): page tree changes (page count, page content streams, resources, media/crop boxes, rotation) and non-widget annotation additions/removals/modifications are reported as violations, while filling existing form fields and signing are permitted.
   - `FormFillingAndAnnotations` (`P = 3`): page tree and page content/resource modifications are reported as violations, while form filling and annotation updates are permitted.

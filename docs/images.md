@@ -56,6 +56,8 @@ foreach (PdfPlacedImage placed in page.PlacedImages)
 - **Explicit mask** (`/Mask` with a stream)—a stencil marking what to hide; areas it covers become transparent.
 - **Color key** (`/Mask` with an array)—ranges; falling inside them removes the pixel. The check uses samples as stored, not the colors they represent after conversion—as the specification requires.
 
+A mask that refers back to an image it is masking raises `PdfFormatException`. Masks chained more than four levels deep, or an image and its masks exceeding 192 million pixels together, raise `PdfResourceLimitException`. A conforming mask has no mask of its own, so neither limit affects valid files.
+
 The soft mask `/Matte` key (§11.6.5) is removed before color-space conversion: the original color is recovered from pre-multiplied components and alpha. That avoids a color halo on semi-transparent edges from how the image was prepared.
 
 ## Color spaces

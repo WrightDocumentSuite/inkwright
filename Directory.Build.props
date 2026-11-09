@@ -22,7 +22,7 @@
     <Authors>Pavel Deecalov</Authors>
     <Copyright>Copyright 2026 Pavel Deecalov</Copyright>
     <Product>Inkwright</Product>
-    <Version>0.1.4</Version>
+    <Version>0.1.5</Version>
     <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
     <PackageProjectUrl>https://github.com/WrightDocumentSuite/inkwright</PackageProjectUrl>
     <RepositoryUrl>https://github.com/WrightDocumentSuite/inkwright.git</RepositoryUrl>

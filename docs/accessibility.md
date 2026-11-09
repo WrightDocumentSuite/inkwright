@@ -41,6 +41,12 @@ The method writes an identification schema to XMP, the document title, and two r
 with `Marked` and `ViewerPreferences` with `DisplayDocTitle`. It does not make the document conforming —
 it makes a declaration. You still need to validate.
 
+For UA-2, `Declare` also selects PDF 2.0 and gives an existing, single `Document` root the PDF 2.0
+structure namespace when it has none. Call it after building the tagged content. Explicit namespaces
+and other tree shapes remain the caller's responsibility; validation rejects a root that does not
+meet UA-2's requirement. This prevents a UA-2 metadata claim on a PDF 1.7 file from passing the local
+validator. A downgrade requires rebuilding the document under the earlier profile, not just editing XMP.
+
 ## What Is Checked
 
 ### Document as a Whole
@@ -48,6 +54,8 @@ it makes a declaration. You still need to validate.
 | Clause (UA-1 / UA-2) | Requirement | How It Is Checked |
 | --- | --- | --- |
 | 5 | The file declares conformance via an identification schema in XMP | XMP parsing requires a single `part` of the correct value; for UA-2, mandatory `rev = 2024` as well |
+| — / 6.1 | UA-2 uses PDF 2.0 | Header or catalog version |
+| — / 8.2.5.2 | UA-2 has one `Document` root in the PDF 2.0 structure namespace | Root count, tag and explicit namespace |
 | 7.1 / 8.2 | Content is marked up; a structure tree exists | `StructTreeRoot`, `MarkInfo` with `Marked`, tree is non-empty |
 | 7.1 / 8.2 | Markup is not flagged as suspect | `Suspects` must be false |
 | 7.1 / 8.2.2 | Non-standard tags map to standard ones | The `RoleMap` chain is traced to a standard type |

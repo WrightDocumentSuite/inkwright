@@ -11,6 +11,11 @@ namespace Inkwright.Signing;
 /// </summary>
 internal static class PdfModificationVerifier
 {
+    private static readonly PdfName[] PageGraphKeys =
+        [PdfName.Get("Resources"), PdfName.Get("Group"), PdfName.Get("UserUnit")];
+
+    private static readonly PdfName AppearanceKey = PdfName.Get("AP");
+
     internal static PdfFieldLock? ReadFieldLock(PdfDictionary? fieldDictionary, PdfDictionary signature)
     {
         PdfCertificationLevel? lockPermissions = null;
@@ -167,8 +172,35 @@ internal static class PdfModificationVerifier
         if (!beforePage.GetContent().AsSpan().SequenceEqual(afterPage.GetContent()))
             violations.Add($"Page {pageIndex + 1} content stream changed after certification ({level}).");
 
+        CheckPageGraph(pageIndex, level, beforePage, afterPage, violations);
+
         if (level is PdfCertificationLevel.NoChanges or PdfCertificationLevel.FormFilling)
             CheckPageAnnotations(pageIndex, level, beforePage, afterPage, violations);
+    }
+
+    /// <summary>
+    /// A page's content stream only names what it draws. The forms, images and fonts behind those
+    /// names decide what actually appears, so changing one changes the page as surely as editing
+    /// its content stream does.
+    /// </summary>
+    private static void CheckPageGraph(
+        int pageIndex,
+        PdfCertificationLevel level,
+        PdfPage beforePage,
+        PdfPage afterPage,
+        List<string> violations)
+    {
+        foreach (PdfName key in PageGraphKeys)
+        {
+            PdfGraphComparer.Outcome outcome = PdfGraphComparer.Compare(
+                beforePage.Dictionary.Get(key),
+                afterPage.Dictionary.Get(key));
+
+            if (outcome == PdfGraphComparer.Outcome.Different)
+                violations.Add($"Page {pageIndex + 1} /{key.Value} changed after certification ({level}).");
+            else if (outcome == PdfGraphComparer.Outcome.TooLargeToCompare)
+                violations.Add($"Page {pageIndex + 1} /{key.Value} is too large to confirm it is unchanged ({level}).");
+        }
     }
 
     private static void CheckPageAnnotations(
@@ -191,7 +223,8 @@ internal static class PdfModificationVerifier
         {
             PdfAnnotation a = beforeNonWidgets[i];
             PdfAnnotation b = afterNonWidgets[i];
-            if (a.Type != b.Type || a.Rectangle != b.Rectangle || a.Contents != b.Contents)
+            if (a.Type != b.Type || a.Rectangle != b.Rectangle || a.Contents != b.Contents ||
+                PdfGraphComparer.Compare(a.Dictionary.Get(AppearanceKey), b.Dictionary.Get(AppearanceKey)) != PdfGraphComparer.Outcome.Equal)
             {
                 violations.Add($"Page {pageIndex + 1} annotation '{a.Subtype}' was modified, violating DocMDP ({level}).");
                 return;

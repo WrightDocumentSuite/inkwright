@@ -623,7 +623,11 @@ public class PdfAConformanceTests
         foreach (byte b in bits)
             declared += System.Numerics.BitOperations.PopCount(b);
 
-        Assert.InRange(declared, 2, 512);
+        PdfStream program = descriptor.GetStream(PdfNames.FontFile2)!;
+        int glyphCount = TrueTypeFont.Parse(program.DecodedSpan().ToArray()).GlyphCount;
+        Assert.Equal(glyphCount, declared);
+        for (int cid = 0; cid < glyphCount; cid++)
+            Assert.NotEqual(0, bits[cid >> 3] & (0x80 >> (cid & 7)));
     }
 
     [Fact]

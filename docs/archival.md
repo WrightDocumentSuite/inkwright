@@ -126,9 +126,25 @@ TrueType encodings, `ToUnicode`, `.notdef`), annotations, forms, actions, XMP an
 structure tree for level A, attachments, optional content, and Annex B signature requirements.
 
 Validated against 106 archival files from the iText test set that claim parts 1–3: all are
-recognized as conforming to their claim. Full formal validation is still done by veraPDF —
+recognized as conforming to their claim. CI checks one sample per claim with veraPDF, which shares
+no code with this library; `.github/scripts/verapdf-known-failures.txt` lists any rule accepted as
+failing, with the reason, and a listed rule that starts passing fails the job. Full formal validation is still done by veraPDF —
 some requirements (for example, legality of font embedding or conformance of an embedded PDF)
 cannot in principle be inferred from the file.
+
+The gate pins veraPDF 1.30.3 and the installer's SHA-256. Run it locally after generating samples:
+
+```powershell
+dotnet run --project .github/verapdf-samples/VeraPdfSamples.csproj -c Release -- artifacts/verapdf/samples
+./.github/scripts/Test-VeraPdf.ps1 -SamplesDirectory artifacts/verapdf/samples -WorkDirectory artifacts/verapdf/tool
+```
+
+Java and an embeddable Arial or DejaVu Sans font are required. All eleven samples must be present;
+an execution error, missing report or unexplained noncompliant result fails the gate. XML reports
+are saved under the work directory's `reports/` and uploaded by CI even after a failure. Validation
+on 2026-11-09 exposed a CIDSet error: preserving TrueType glyph indices leaves empty glyphs in the
+program, so its CIDSet must include those indices as well as glyphs with outlines. The regression
+test compares the declaration against the embedded program's glyph count.
 
 Attachments are allowed only in Part 3: Part 2 permits embedded files only if they themselves
 conform to PDF/A, so the profile rejects an XML invoice alongside a Part 2 claim.

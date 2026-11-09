@@ -74,6 +74,63 @@ public class PdfUaTests
     }
 
     [Fact]
+    public void Ua2DeclarationPromotesTheVersionAndDocumentNamespace()
+    {
+        using PdfDocument document = Tagged(["Document"]);
+        PdfUaProfile.Declare(document, PdfUaConformance.Ua2, "An accessible document");
+        PdfUaProfile.Declare(document, PdfUaConformance.Ua2, "An accessible document");
+
+        using var saved = new MemoryStream();
+        document.Save(saved);
+        using PdfDocument reloaded = PdfDocument.Load(saved.ToArray());
+        Assert.Equal(Inkwright.IO.PdfVersion.Pdf20, reloaded.Version);
+        PdfStructureNode root = Assert.Single(StructureReader.Read(reloaded));
+        Assert.Equal("Document", root.Tag);
+        Assert.Equal("http://iso.org/pdf2/ssn", root.NamespaceName);
+        Assert.Single(reloaded.Catalog.GetDictionary(PdfName.Get("StructTreeRoot"))!
+            .GetArray(PdfName.Get("Namespaces"))!);
+        Assert.DoesNotContain(PdfUaProfile.Violations(PdfUaProfile.Validate(reloaded, PdfUaConformance.Ua2)),
+            problem => problem.Clause is "6.1" or "8.2.5.2" or "8.2.2");
+    }
+
+    [Fact]
+    public void Ua2ValidationRejectsTheOldVersionAndDefaultDocumentNamespace()
+    {
+        using PdfDocument document = Tagged(["P"]);
+        IReadOnlyList<PdfUaProblem> problems = PdfUaProfile.Validate(document, PdfUaConformance.Ua2);
+        Assert.Contains(problems, problem => problem.Clause == "6.1");
+        Assert.Contains(problems, problem => problem.Clause == "8.2.5.2");
+
+        document.Catalog.Set(PdfNames.Version, PdfValue.Name(PdfName.Get("2.0")));
+        Assert.DoesNotContain(PdfUaProfile.Validate(document, PdfUaConformance.Ua2),
+            problem => problem.Clause == "6.1");
+    }
+
+    [Fact]
+    public void Ua2ValidationAcceptsARootRoleMappedIntoThePdf20Namespace()
+    {
+        using PdfDocument document = Tagged(["MyDocument"]);
+        PdfStructureNode node = Assert.Single(StructureReader.Read(document));
+        var standard = new PdfDictionary();
+        standard.Set(PdfName.Get("NS"), PdfValue.TextString("http://iso.org/pdf2/ssn"));
+        PdfValue standardReference = PdfValue.Reference(document.AddObject(PdfValue.Dictionary(standard)));
+        var roleMap = new PdfDictionary();
+        roleMap.Set(PdfName.Get("MyDocument"), PdfValue.Array(new PdfArray(
+            PdfValue.Name(PdfName.Get("Document")), standardReference)));
+        var custom = new PdfDictionary();
+        custom.Set(PdfName.Get("NS"), PdfValue.TextString("urn:example:structure"));
+        custom.Set(PdfName.Get("RoleMapNS"), PdfValue.Dictionary(roleMap));
+        PdfValue customReference = PdfValue.Reference(document.AddObject(PdfValue.Dictionary(custom)));
+        node.Dictionary.Set(PdfName.Get("NS"), customReference);
+        document.Catalog.GetDictionary(PdfName.Get("StructTreeRoot"))!
+            .Set(PdfName.Get("Namespaces"), PdfValue.Array(new PdfArray(standardReference, customReference)));
+        document.InvalidateStructure();
+
+        Assert.DoesNotContain(PdfUaProfile.Validate(document, PdfUaConformance.Ua2),
+            problem => problem.Clause == "8.2.5.2");
+    }
+
+    [Fact]
     public void CatchesAHeadingSequenceThatSkipsALevel()
     {
         using PdfDocument document = Tagged(["H1", "H3"]);

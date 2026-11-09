@@ -6,8 +6,8 @@ namespace Inkwright.Fonts;
 
 /// <summary>
 /// A simple font's encoding: the map from single-byte codes to glyph names, and from glyph names to
-/// the characters they stand for. The four predefined encodings of ISO 32000-1 Annex D are built
-/// from the specification's own table.
+/// the characters they stand for. Includes the four predefined encodings of ISO 32000-1 Annex D
+/// and the built-in Symbol encoding.
 /// </summary>
 public sealed class FontEncoding
 {
@@ -35,6 +35,9 @@ public sealed class FontEncoding
 
     /// <summary>The encoding PDF text strings use outside of content streams.</summary>
     public static FontEncoding PdfDoc => Data.Value.PdfDoc;
+
+    /// <summary>The built-in encoding of the standard Symbol font.</summary>
+    public static FontEncoding Symbol => Data.Value.Symbol;
 
     /// <summary>The glyph name a code maps to, or <see langword="null"/> when the code is unassigned.</summary>
     /// <param name="code">The single-byte character code.</param>
@@ -91,7 +94,7 @@ public sealed class FontEncoding
     };
 
     /// <summary>
-    /// The text a glyph name stands for, understanding both the standard Latin names and the
+    /// The text a glyph name stands for, understanding the standard Latin and Symbol names and the
     /// <c>uniXXXX</c>, <c>uXXXX</c> and <c>gNN</c> conventions producers rely on.
     /// </summary>
     /// <param name="glyphName">The glyph name.</param>
@@ -135,6 +138,7 @@ public sealed class FontEncoding
         string?[] mac = new string?[256];
         string?[] win = new string?[256];
         string?[] pdf = new string?[256];
+        string?[] symbol = new string?[256];
         var unicode = new Dictionary<string, int>(StringComparer.Ordinal);
         Span<Range> fields = stackalloc Range[6];
 
@@ -162,11 +166,25 @@ public sealed class FontEncoding
         win[0xA0] = "space";
         win[0xAD] = "hyphen";
 
+        foreach (ReadOnlySpan<char> line in SymbolGlyphData.Table.AsSpan().EnumerateLines())
+        {
+            if (line.Split(fields, ' ', StringSplitOptions.RemoveEmptyEntries) != 3)
+                continue;
+
+            string name = line[fields[0]].ToString();
+            int code = int.Parse(line[fields[1]], NumberStyles.HexNumber, CultureInfo.InvariantCulture);
+            symbol[code] = name;
+            // Some glyphs have two Unicode equivalents. Keep the existing Latin mapping (mu,
+            // for example); otherwise use the first entry in Adobe's Symbol mapping table.
+            unicode.TryAdd(name, int.Parse(line[fields[2]], NumberStyles.HexNumber, CultureInfo.InvariantCulture));
+        }
+
         return new Tables(
             new FontEncoding("StandardEncoding", standard),
             new FontEncoding("WinAnsiEncoding", win),
             new FontEncoding("MacRomanEncoding", mac),
             new FontEncoding("PDFDocEncoding", pdf),
+            new FontEncoding("Symbol", symbol),
             unicode.ToFrozenDictionary(StringComparer.Ordinal));
     }
 
@@ -184,5 +202,6 @@ public sealed class FontEncoding
         FontEncoding WinAnsi,
         FontEncoding MacRoman,
         FontEncoding PdfDoc,
+        FontEncoding Symbol,
         FrozenDictionary<string, int> GlyphToUnicode);
 }

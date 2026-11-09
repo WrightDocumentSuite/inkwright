@@ -64,6 +64,51 @@ jobs:
         shell: pwsh
         run: ./.github/scripts/Test-PackageHealth.ps1 -Solution Inkwright.slnx
 
+  independent-conformance:
+    name: Independent PDF/A and PDF/UA validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install .NET SDK from global.json
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+
+      - name: Install an embeddable font
+        run: sudo apt-get install --yes --no-install-recommends fonts-dejavu-core
+
+      - name: Write one sample per conformance claim
+        run: dotnet run --project .github/verapdf-samples/VeraPdfSamples.csproj --configuration Release -- artifacts/verapdf/samples
+
+      - name: Check the independent validator gate
+        shell: pwsh
+        run: ./.github/scripts/Test-VeraPdfGate.ps1
+
+      - name: Validate the samples with veraPDF
+        shell: pwsh
+        run: >-
+          ./.github/scripts/Test-VeraPdf.ps1
+          -SamplesDirectory artifacts/verapdf/samples
+          -WorkDirectory "${{ runner.temp }}/verapdf"
+          -InstallerSha256 b512bf24945503a33fc10738ecffc1f2dccaaf8593a448e94ee9ac86a9559a59
+
+      - name: Upload independent validation reports
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: verapdf-conformance
+          path: |
+            artifacts/verapdf/samples/*.pdf
+            ${{ runner.temp }}/verapdf/reports/*.xml
+          if-no-files-found: error
+          retention-days: 14
+
   fuzz-seed-replay:
     name: Replay fuzz regression seeds
     runs-on: ubuntu-latest

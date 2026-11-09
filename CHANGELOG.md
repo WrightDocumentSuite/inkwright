@@ -5,6 +5,39 @@ public API is pre-1.0; breaking changes are called out explicitly.
 
 ## Unreleased
 
+## 0.1.5 — 2026-11-09
+
+### Added
+
+- CI validates one sample per PDF/A and PDF/UA claim with veraPDF, independently of the library's
+  own validators.
+
+### Changed
+
+- Redaction now refuses with `PdfRedactionException` when content cannot be checked against the
+  regions (unresolved font, Form XObjects nested past 12 levels, or a form that draws itself)
+  instead of returning normally with that content left in place.
+
+### Fixed
+
+- Text extraction from Standard 14 Symbol fonts without explicit encoding now uses the built-in
+  Greek and mathematical character mapping instead of Latin StandardEncoding.
+- Embedded TrueType CID fonts now declare empty glyph slots retained by subsetting in `CIDSet`,
+  fixing independent PDF/A-2/3 and PDF/UA-1 validation failures.
+- PDF/UA-2 declarations select PDF 2.0 and supply a missing namespace on a single `Document` root;
+  the validator now rejects the wrong version and root namespace.
+
+- Redaction removes `ActualText`, `Alt` and `E` from marked-content sequences and structure
+  elements whose content it touched; they used to keep the removed text extractable.
+  `PdfRedactionResult.SemanticEntriesRemoved` reports how many went.
+- Redacting a Form XObject affects only the selected placement. Other pages and other placements
+  of the same form keep the original, and image entries are kept while another page draws them.
+- DocMDP and FieldMDP verification compares each page's resource graph, so changing a Form
+  XObject, image or font behind an unchanged content stream is reported as a modification.
+- An image whose `/SMask` or `/Mask` refers back to itself raises `PdfFormatException` instead of
+  overflowing the stack and ending the process; over-long mask chains raise
+  `PdfResourceLimitException`.
+
 ## 0.1.4 — 2026-11-08
 
 ### Added

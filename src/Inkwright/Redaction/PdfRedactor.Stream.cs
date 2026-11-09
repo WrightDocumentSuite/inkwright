@@ -9,6 +9,9 @@ internal static partial class PdfRedactor
 {
     private const int MaxFormDepth = 12;
 
+    /// <summary>Bounds the work a page can demand by drawing nested forms many times over.</summary>
+    private const int MaxFormInvocations = 100_000;
+
     private sealed partial class StreamRewriter(
         PdfDocument document,
         PdfRectangle[] targets,
@@ -16,7 +19,9 @@ internal static partial class PdfRedactor
     {
         private readonly Dictionary<PdfDictionary, LoadedFont> _fonts = [];
         private readonly Stack<GraphicsState> _stack = new();
+        private readonly HashSet<PdfStream> _activeForms = new(ReferenceEqualityComparer.Instance);
         private GraphicsState _state = GraphicsState.Initial();
+        private int _formInvocations;
 
         internal int GlyphsRemoved { get; private set; }
 
@@ -25,56 +30,63 @@ internal static partial class PdfRedactor
         internal byte[] Rewrite(
             ReadOnlySpan<byte> content,
             PdfDictionary resources,
+            PdfObjectId resourcesOwner,
             PdfMatrix baseMatrix,
-            int depth)
+            int depth,
+            long structParents)
         {
-            if (depth > MaxFormDepth || content.IsEmpty)
-                return content.ToArray();
+            if (depth > MaxFormDepth)
+            {
+                throw new PdfRedactionException(
+                    $"Form XObjects are nested more than {MaxFormDepth} levels deep, so their content cannot be checked for the redaction regions.");
+            }
+
+            if (content.IsEmpty)
+                return [];
 
             _state = _state with { Transform = baseMatrix * _state.Transform };
             ContentOperations operations = ContentOperations.Parse(content, document);
 
             using var buffer = new MemoryStream(content.Length);
             using var writer = new Utf8Writer(buffer);
-            var serializer = new PdfObjectSerializer(writer);
+            var context = new StreamContext(
+                resources,
+                resourcesOwner,
+                depth,
+                structParents,
+                writer,
+                new PdfObjectSerializer(writer));
 
-            HashSet<PdfName> survivingImages = [];
-            HashSet<PdfName> removedImages = [];
             PdfMatrix textMatrix = PdfMatrix.Identity;
             PdfMatrix lineMatrix = PdfMatrix.Identity;
 
             for (int i = 0; i < operations.Count; i++)
             {
-                ProcessOperation(
-                    operations,
-                    i,
-                    resources,
-                    depth,
-                    writer,
-                    serializer,
-                    survivingImages,
-                    removedImages,
-                    ref textMatrix,
-                    ref lineMatrix);
+                int removedBefore = GlyphsRemoved + ImagesRemoved;
+                ProcessOperation(operations, i, context, ref textMatrix, ref lineMatrix);
+
+                if (GlyphsRemoved + ImagesRemoved > removedBefore)
+                {
+                    foreach (MarkedSequence sequence in context.OpenSequences)
+                        sequence.Redacted = true;
+                }
             }
 
-            PruneRemovedImageResources(resources, survivingImages, removedImages);
+            FinishOpenSequences(context);
             writer.Flush();
-            return buffer.ToArray();
+            return context.ApplySplices(buffer.ToArray());
         }
 
         private void ProcessOperation(
             ContentOperations operations,
             int index,
-            PdfDictionary resources,
-            int depth,
-            Utf8Writer writer,
-            PdfObjectSerializer serializer,
-            HashSet<PdfName> survivingImages,
-            HashSet<PdfName> removedImages,
+            StreamContext context,
             ref PdfMatrix textMatrix,
             ref PdfMatrix lineMatrix)
         {
+            Utf8Writer writer = context.Writer;
+            PdfObjectSerializer serializer = context.Serializer;
+            PdfDictionary resources = context.Resources;
             PdfOperator op = operations.GetOperator(index);
             ReadOnlySpan<PdfValue> operands = operations.GetOperands(index);
 
@@ -168,7 +180,22 @@ internal static partial class PdfRedactor
                     break;
 
                 case PdfOperator.DrawXObject when operands.Length >= 1 && operands[0].AsName is { } name:
-                    RewriteXObject(name, resources, depth, writer, serializer, survivingImages, removedImages);
+                    RewriteXObject(name, context);
+                    break;
+
+                case PdfOperator.BeginMarkedContent:
+                case PdfOperator.BeginMarkedContentProperties:
+                    BeginMarkedSequence(op, operands, context, operations.GetUnknownName(index));
+                    break;
+
+                case PdfOperator.EndMarkedContent:
+                    WriteOperation(writer, serializer, op, operands, operations.GetUnknownName(index));
+                    EndMarkedSequence(context);
+                    break;
+
+                case PdfOperator.SetExtGState when operands.Length >= 1:
+                    ApplyExtGStateFont(resources, operands[0].AsName);
+                    WriteOperation(writer, serializer, op, operands, operations.GetUnknownName(index));
                     break;
 
                 case PdfOperator.InlineImage when operands.Length >= 1 && operands[^1].AsStream is { } inline:
@@ -226,8 +253,17 @@ internal static partial class PdfRedactor
             PdfObjectSerializer serializer,
             ref PdfMatrix textMatrix)
         {
-            if (strValue.Kind != PdfValueKind.String || _state.Font is not { } font)
+            if (strValue.Kind != PdfValueKind.String)
             {
+                WriteOperation(writer, serializer, PdfOperator.ShowText, [strValue], "Tj");
+                return;
+            }
+
+            if (_state.Font is not { } font)
+            {
+                if (strValue.AsStringBytes.Length > 0)
+                    throw UnmeasurableText();
+
                 WriteOperation(writer, serializer, PdfOperator.ShowText, [strValue], "Tj");
                 return;
             }
@@ -252,6 +288,12 @@ internal static partial class PdfRedactor
         {
             if (_state.Font is not { } font)
             {
+                for (int i = 0; i < input.Count; i++)
+                {
+                    if (input.Get(i).Kind == PdfValueKind.String && input.Get(i).AsStringBytes.Length > 0)
+                        throw UnmeasurableText();
+                }
+
                 WriteOperation(writer, serializer, PdfOperator.ShowTextAdjusted, [PdfValue.Array(input)], "TJ");
                 return;
             }
@@ -278,6 +320,9 @@ internal static partial class PdfRedactor
             else if (output.Count > 0)
                 WriteOperation(writer, serializer, PdfOperator.ShowTextAdjusted, [PdfValue.Array(output)], "TJ");
         }
+
+        private static PdfRedactionException UnmeasurableText() => new(
+            "The page shows text in a font that cannot be resolved, so the position of that text is unknown and it cannot be checked for the redaction regions.");
 
         private int FilterStringIntoParts(
             ReadOnlySpan<byte> bytes,

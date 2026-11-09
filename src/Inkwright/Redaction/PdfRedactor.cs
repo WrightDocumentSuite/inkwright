@@ -91,7 +91,18 @@ internal static partial class PdfRedactor
         int extraAnnotationsRemoved)
     {
         var rewriter = new StreamRewriter(page.Document, targets, options.RemoveImages);
-        byte[] rewritten = rewriter.Rewrite(page.GetContent(), page.Resources, PdfMatrix.Identity, depth: 0);
+        PdfDictionary resources = page.Resources;
+        PdfObjectId resourcesOwner = page.Dictionary.TryGetRaw(PdfNames.Resources, out PdfValue rawResources) && rawResources.IsReference
+            ? rawResources.AsReference
+            : page.Id;
+
+        byte[] rewritten = rewriter.Rewrite(
+            page.GetContent(),
+            resources,
+            resourcesOwner,
+            PdfMatrix.Identity,
+            depth: 0,
+            page.Dictionary.GetInteger(PdfNames.StructParents, -1));
         page.SetContent(rewritten);
 
         int removedAnnotations = extraAnnotationsRemoved;
@@ -101,12 +112,16 @@ internal static partial class PdfRedactor
                 annotation => IntersectsAny(annotation.Rectangle, targets));
         }
 
+        rewriter.Commit(page);
         PaintOverlays(page, specs, options);
         return new PdfRedactionResult(
             targets.Length,
             rewriter.GlyphsRemoved,
             rewriter.ImagesRemoved,
-            removedAnnotations);
+            removedAnnotations)
+        {
+            SemanticEntriesRemoved = rewriter.SemanticEntriesRemoved,
+        };
     }
 
     private static void PaintOverlays(PdfPage page, OverlaySpec[] specs, PdfRedactionOptions options)

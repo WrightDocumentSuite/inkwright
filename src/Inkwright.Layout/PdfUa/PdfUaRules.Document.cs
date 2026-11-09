@@ -19,6 +19,10 @@ internal static partial class PdfUaRules
     /// <summary>Checks that the file identifies itself as conforming (clause 5).</summary>
     internal static void CheckIdentification(PdfUaContext context)
     {
+        if (context.Part == 2 && context.Document.Version != Inkwright.IO.PdfVersion.Pdf20 &&
+            context.Catalog.GetName(PdfNames.Version)?.Value != "2.0")
+            context.Violation("6.1", "PDF/UA-2 requires PDF version 2.0 in the header or catalogue.");
+
         string? metadata = ReadMetadata(context);
 
         if (metadata is null)
@@ -99,6 +103,13 @@ internal static partial class PdfUaRules
 
         if (context.Structure.Count == 0)
             context.Violation(clause, "The structure tree is empty.");
+
+        if (context.Part == 2 &&
+            (context.Structure.Count != 1 || context.Structure[0].ResolvedTag != "Document" ||
+             context.Structure[0].ResolvedNamespaceName != Pdf20Namespace))
+        {
+            context.Violation("8.2.5.2", "The structure tree shall have a single Document root in the PDF 2.0 namespace.");
+        }
     }
 
     /// <summary>

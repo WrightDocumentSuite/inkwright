@@ -21,8 +21,8 @@ and check `git status` before treating its CI result as release evidence.
 From the clean public `inkwright` root:
 
 ```bash
-VERSION=0.1.4
-BASELINE_VERSION=0.1.3
+VERSION=0.1.5
+BASELINE_VERSION=0.1.4
 PACKAGE_DIR="artifacts/packages/$VERSION"
 PUBLIC_SHA=$(git rev-parse HEAD)
 export NUGET_PACKAGES="$PWD/artifacts/nuget-cache/$VERSION"
@@ -39,7 +39,7 @@ dotnet pack Inkwright.slnx -c Release --no-restore \
   --output "$PACKAGE_DIR"
 ```
 
-The validation properties must also be present during restore: they add the five 0.1.3 packages as
+The validation properties must also be present during restore: they add the five 0.1.4 packages as
 `PackageDownload` baselines. Passing them only to `dotnet pack --no-restore` leaves no baseline
 `.nupkg` for the API compatibility task.
 
@@ -50,8 +50,8 @@ lock-file diff, commit it with the dependency change, and then repeat the locked
 
 The `Version` parameter is intentionally set on the release command: the same commit can be built as prerelease (`0.2.0-preview.1`) or stable without editing the project. If the parameter is omitted, the value from `Directory.Build.props` is used.
 
-Versions `0.1.0` through `0.1.3` have already been published and cannot be replaced. The examples
-use `0.1.4`; query the NuGet flat-container index immediately before a later release and raise
+Versions `0.1.0` through `0.1.4` have already been published and cannot be replaced. The examples
+use `0.1.5`; query the NuGet flat-container index immediately before a later release and raise
 `VERSION` when needed rather than relying on `--skip-duplicate`, which would silently leave the old
 package on nuget.org.
 
@@ -65,7 +65,7 @@ check `.nuspec`, `README.md`, `NOTICE`, `lib/net10.0`, dependencies, and for `In
 Run the repository gates against that exact directory rather than inspecting an older wildcard:
 
 ```powershell
-$VERSION = '0.1.4'
+$VERSION = '0.1.5'
 $PACKAGE_DIR = "artifacts/packages/$VERSION"
 $PUBLIC_SHA = (git rev-parse HEAD).Trim()
 ./.github/scripts/Test-Packages.ps1 `
@@ -98,7 +98,7 @@ takes it from there and no longer looks at the local feed. A rebuilt package wit
 can sit untouched while the smoke test verifies yesterday's bytes.
 
 ```bash
-VERSION=0.1.4
+VERSION=0.1.5
 PUBLIC_ROOT="/absolute/path/to/public/inkwright"
 PACKAGE_DIR="$PUBLIC_ROOT/artifacts/packages/$VERSION"
 SMOKE_ROOT=$(mktemp -d)
@@ -136,7 +136,7 @@ dependencies and adds the local source. Temporary `PackageSmoke` is not part of 
 
 ### Verify behavior, not just compilation
 
-An empty `Main` that builds only proves the nuspec is not broken. More useful is a short program that exercises through the built binaries what changed in this release: it also checks the **public API surface**. Internal types like `PdfNames` are visible to tests via `InternalsVisibleTo`, but not to package consumers — code in documentation examples that accidentally relied on such a type compiles for you and not for the user.
+An empty `Main` that builds only proves the nuspec is not broken. More useful is a short program that exercises through the built binaries what changed in this release: it also checks the **public API surface**. Internal types like `PdfNames` are visible to tests via `InternalsVisibleTo`, but not to package consumers вЂ” code in documentation examples that accidentally relied on such a type compiles for you and not for the user.
 
 ## Publish
 
@@ -145,7 +145,7 @@ before the first push; none may already list the version. Push dependencies in o
 each prerequisite is indexed before pushing its dependants:
 
 ```bash
-VERSION=0.1.4
+VERSION=0.1.5
 PACKAGE_DIR="artifacts/packages/$VERSION"
 SOURCE=https://api.nuget.org/v3/index.json
 
@@ -176,7 +176,7 @@ artifact to a stable version or publish it as though it came from the clean rele
 ## Release handoff
 
 Before the public release commit is built, move the relevant entries from `Unreleased` in
-`CHANGELOG.md` to `## $VERSION — YYYY-MM-DD`, leave a fresh empty `Unreleased` section, and review
+`CHANGELOG.md` to `## $VERSION вЂ” YYYY-MM-DD`, leave a fresh empty `Unreleased` section, and review
 the diff. After all five package pushes succeed:
 
 1. Verify all five exact versions are indexed on nuget.org, their dependency links resolve, and
@@ -190,7 +190,7 @@ the diff. After all five package pushes succeed:
    five `.snupkg` files. Record any indexing delay or exceptional manual step in the release notes.
 
 If package publication stops part-way, do not create the tag or GitHub Release. Resolve the partial
-NuGet state explicitly—published versions are immutable—then choose a new patch version for rebuilt
+NuGet state explicitlyвЂ”published versions are immutableвЂ”then choose a new patch version for rebuilt
 artifacts.
 
 Packing also produces one `.snupkg` beside every ordinary package. Source Link maps its portable PDB

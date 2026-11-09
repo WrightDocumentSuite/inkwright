@@ -1,5 +1,6 @@
 using Inkwright.Color;
 using Inkwright.Cos;
+using Inkwright.Diagnostics;
 using Inkwright.Filters;
 
 namespace Inkwright.Images;
@@ -15,34 +16,74 @@ public static class PdfImageReader
     /// <summary>The most pixels one image may decode to, which stops a hostile file exhausting memory.</summary>
     private const long MaxPixels = 64L * 1024 * 1024;
 
+    /// <summary>
+    /// How far masks may chain. A conforming mask has no mask of its own, so this only has to leave
+    /// room for sloppy producers while keeping recursion shallow.
+    /// </summary>
+    private const int MaxMaskDepth = 4;
+
+    /// <summary>The most pixels one decode may touch: an image, a soft mask and an explicit mask.</summary>
+    private const long MaxChainPixels = 3 * MaxPixels;
+
+    /// <summary>What one decode has done so far, shared with the masks it decodes along the way.</summary>
+    private sealed class DecodeContext
+    {
+        internal HashSet<PdfStream> ActivePath { get; } = new(ReferenceEqualityComparer.Instance);
+
+        internal long Pixels { get; set; }
+    }
+
     /// <summary>Decodes an image XObject.</summary>
     /// <param name="stream">The image stream.</param>
     /// <param name="resources">The resources the image's colour space may be named in.</param>
     /// <returns>The pixels.</returns>
     /// <exception cref="NotSupportedException">The image uses a codec this library does not decode.</exception>
+    /// <exception cref="PdfFormatException">The image's masks refer back to one another.</exception>
+    /// <exception cref="PdfResourceLimitException">The image's masks chain too deeply or are too large in total.</exception>
     public static PdfImageData Decode(PdfStream stream, PdfDictionary? resources = null)
     {
         ArgumentNullException.ThrowIfNull(stream);
+        return Decode(stream, resources, new DecodeContext());
+    }
 
-        PdfDictionary dictionary = stream.Dictionary;
-        int width = (int)dictionary.GetFirst(PdfNames.Width, PdfName.Get("W")).AsInteger;
-        int height = (int)dictionary.GetFirst(PdfNames.Height, PdfName.Get("H")).AsInteger;
+    private static PdfImageData Decode(PdfStream stream, PdfDictionary? resources, DecodeContext context)
+    {
+        if (!context.ActivePath.Add(stream))
+            throw new PdfFormatException("An image mask refers back to an image it is masking.");
 
-        if (width <= 0 || height <= 0 || (long)width * height > MaxPixels)
-            throw new NotSupportedException($"The image is {width} by {height}, which is not a size that can be decoded.");
+        try
+        {
+            if (context.ActivePath.Count > MaxMaskDepth + 1)
+                throw new PdfResourceLimitException("PdfImageReader.MaxMaskDepth", MaxMaskDepth, context.ActivePath.Count - 1);
 
-        Samples samples = ReadSamples(stream, dictionary, width, height, resources);
-        SoftMask? softMask = ReadSoftMask(dictionary, samples.Components, resources);
-        if (softMask is { Matte: not null } matted)
-            RemoveMatte(samples, matted, width, height);
+            PdfDictionary dictionary = stream.Dictionary;
+            int width = (int)dictionary.GetFirst(PdfNames.Width, PdfName.Get("W")).AsInteger;
+            int height = (int)dictionary.GetFirst(PdfNames.Height, PdfName.Get("H")).AsInteger;
 
-        byte[] pixels = ToRgba(samples, width, height);
+            if (width <= 0 || height <= 0 || (long)width * height > MaxPixels)
+                throw new NotSupportedException($"The image is {width} by {height}, which is not a size that can be decoded.");
 
-        if (softMask is { } alpha)
-            ApplySoftMask(alpha.Image, pixels, width, height);
-        ApplyMask(dictionary, samples, pixels, width, height, resources);
+            context.Pixels += (long)width * height;
+            if (context.Pixels > MaxChainPixels)
+                throw new PdfResourceLimitException("PdfImageReader.MaxChainPixels", MaxChainPixels, context.Pixels);
 
-        return new PdfImageData(width, height, pixels);
+            Samples samples = ReadSamples(stream, dictionary, width, height, resources);
+            SoftMask? softMask = ReadSoftMask(dictionary, samples.Components, resources, context);
+            if (softMask is { Matte: not null } matted)
+                RemoveMatte(samples, matted, width, height);
+
+            byte[] pixels = ToRgba(samples, width, height);
+
+            if (softMask is { } alpha)
+                ApplySoftMask(alpha.Image, pixels, width, height);
+            ApplyMask(dictionary, samples, pixels, width, height, resources, context);
+
+            return new PdfImageData(width, height, pixels);
+        }
+        finally
+        {
+            context.ActivePath.Remove(stream);
+        }
     }
 
     /// <summary>Whether an image is one this library can decode.</summary>
@@ -289,7 +330,7 @@ public static class PdfImageReader
     /// precomposited against.
     /// </summary>
     private static SoftMask? ReadSoftMask(
-        PdfDictionary dictionary, int components, PdfDictionary? resources)
+        PdfDictionary dictionary, int components, PdfDictionary? resources, DecodeContext context)
     {
         if (dictionary.GetStream(PdfNames.SMask) is not { } mask)
             return null;
@@ -297,7 +338,7 @@ public static class PdfImageReader
         PdfImageData alpha;
         try
         {
-            alpha = Decode(mask, resources);
+            alpha = Decode(mask, resources, context);
         }
         catch (NotSupportedException)
         {
@@ -361,7 +402,13 @@ public static class PdfImageReader
     /// saying which pixels to leave out; the second is a range of colours to drop wherever they occur.
     /// </summary>
     private static void ApplyMask(
-        PdfDictionary dictionary, Samples samples, byte[] pixels, int width, int height, PdfDictionary? resources)
+        PdfDictionary dictionary,
+        Samples samples,
+        byte[] pixels,
+        int width,
+        int height,
+        PdfDictionary? resources,
+        DecodeContext context)
     {
         PdfValue mask = dictionary.Get(PdfNames.Mask);
 
@@ -370,7 +417,7 @@ public static class PdfImageReader
             PdfImageData shape;
             try
             {
-                shape = Decode(stencil, resources);
+                shape = Decode(stencil, resources, context);
             }
             catch (NotSupportedException)
             {

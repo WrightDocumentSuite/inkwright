@@ -65,7 +65,8 @@ caller's decision, not the library's.
 
 ## Encodings
 
-`FontEncoding` provides four predefined Annex D encodings and supports `Differences` overlays:
+`FontEncoding` provides four predefined Annex D encodings, the built-in Symbol encoding,
+and `Differences` overlays:
 
 ```csharp
 FontEncoding encoding = FontEncoding.WinAnsi.WithDifferences(differences);
@@ -75,6 +76,19 @@ string? text = encoding.GetText(0xE4);         // "ä"
 
 `FontEncoding.GlyphToText` also understands vendor conventions: `uni0439`, `u20AC`, ligatures
 `f_i`, variants `a.sc`.
+
+When reading a standard Symbol font without `/Encoding`, extraction uses its built-in encoding
+even if `/FontDescriptor` is absent. For example, bytes `61 62 67` represent `αβγ`, with Symbol's
+own advance widths. `Standard14Font.Symbol.DefaultEncoding` exposes this mapping as
+`FontEncoding.Symbol`. Its 189 codes follow the
+[Adobe Symbol mapping](https://www.unicode.org/Public/MAPPINGS/VENDORS/ADOBE/symbol.txt).
+Where that table lists Unicode alternatives, existing Latin glyph mappings are preserved;
+otherwise the first listed value is used.
+
+An explicit `/Encoding` or `/BaseEncoding` overrides the built-in encoding, and `/Differences`
+overlays the selected base. A `/ToUnicode` entry has priority for each code it covers; uncovered
+codes still use the selected encoding. This matters when extracting mathematical text from older
+PDFs that omit a Unicode map.
 
 ## Text Extraction
 

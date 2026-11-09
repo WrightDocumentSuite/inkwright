@@ -92,7 +92,7 @@ public sealed class Standard14Font
     public bool IsSymbolic => Name is "Symbol" or "ZapfDingbats";
 
     /// <summary>The encoding the font uses when a dictionary names none.</summary>
-    public FontEncoding DefaultEncoding => IsSymbolic ? FontEncoding.Standard : FontEncoding.Standard;
+    public FontEncoding DefaultEncoding => Name == "Symbol" ? FontEncoding.Symbol : FontEncoding.Standard;
 
     /// <summary>Helvetica.</summary>
     public static Standard14Font Helvetica => Get("Helvetica");

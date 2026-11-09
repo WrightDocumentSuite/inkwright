@@ -84,7 +84,7 @@ non-attachment stream before semantic rules consume it.
 | 6.3.3.2 | 6.2.11.3.2 | `CIDFontType2` has `CIDToGIDMap` | GV | we write `Identity`; the validator checks presence |
 | 6.3.3.3 | 6.2.11.3.3 | CMap is predefined or embedded; `WMode` matches; `usecmap`/`UseCMap` only reference predefined maps | GV | we use `Identity-H`; the validator checks the stream dictionary and tokenizes every actual `usecmap` operand, so comments and unrelated names cannot satisfy the rule |
 | 6.3.4 | 6.2.11.4.1 | All fonts are embedded | GV | `PdfFontCollection.Embed`; the validator traverses all `/Type /Font` dictionaries |
-| 6.3.5 | 6.2.11.4.2 | Part 1: subsets require `CharSet` (Type 1) and `CIDSet` (CID) | GV | the generator writes `CIDSet` from the subsetter's actual glyph set |
+| 6.3.5 | 6.2.11.4.2 | Part 1: subsets require `CharSet` (Type 1) and `CIDSet` (CID) | GV | `CIDSet` includes all retained glyph indices, including empty TrueType slots |
 | 6.3.6 | 6.2.11.5 | Widths in the dictionary match the font program | GV | widths come from `hmtx`; the validator parses embedded TrueType and compares `W` (composite fonts; simple font `Widths` are not compared) |
 | 6.3.7 | 6.2.11.6 | Non-symbolic TrueType: MacRoman/WinAnsi, no `Differences` (Part 1); symbolic: no `Encoding` | V | per descriptor flags |
 | 6.3.8 | 6.2.11.7.2 | Levels A and U: `ToUnicode` with four exceptions accounted for | GV | embedded fonts always write `ToUnicode`; the validator knows the exceptions |

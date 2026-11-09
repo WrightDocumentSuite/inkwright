@@ -867,7 +867,7 @@ internal sealed class TaggedMarkdownRenderer
         }
         catch (Exception exception) when (exception is
             InvalidDataException or InvalidOperationException or NotSupportedException or
-            ArgumentException or OverflowException)
+            ArgumentException or OverflowException or Diagnostics.PdfFormatException)
         {
             _failedImageResources.Add(resourceKey);
             _diagnostics.Add(

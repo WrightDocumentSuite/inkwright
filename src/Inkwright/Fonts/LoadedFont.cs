@@ -149,9 +149,9 @@ public sealed class LoadedFont
         int flags = (int)(descriptor?.GetInteger(PdfNames.Flags) ?? 0);
         bool symbolic = (flags & 4) != 0 && (flags & 32) == 0;
 
-        FontEncoding baseEncoding = symbolic && standard?.IsSymbolic == true
-            ? FontEncoding.Standard
-            : FontEncoding.Standard;
+        // Standard fonts can omit FontDescriptor entirely, so its Symbolic flag cannot decide
+        // whether to use Symbol's built-in encoding.
+        FontEncoding baseEncoding = standard?.DefaultEncoding ?? FontEncoding.Standard;
 
         PdfValue encodingValue = dictionary.Get(PdfNames.Encoding);
         if (encodingValue.AsName is { } encodingName)
@@ -162,10 +162,6 @@ public sealed class LoadedFont
         {
             baseEncoding = FontEncoding.FromName(encodingDictionary.GetName(PdfNames.BaseEncoding)?.Value) ?? baseEncoding;
             baseEncoding = baseEncoding.WithDifferences(encodingDictionary.GetArray(PdfNames.Differences));
-        }
-        else if (!symbolic)
-        {
-            baseEncoding = FontEncoding.Standard;
         }
 
         double missing = descriptor?.GetNumber(PdfNames.MissingWidth) ?? 0;
