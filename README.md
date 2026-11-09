@@ -172,22 +172,22 @@ byte[] signed = PdfSigner.Sign(document, new PdfSignatureOptions
 
 ## Performance
 
-A historical 200-page report (8000 table rows) and a 90-page document, measured on an Intel Core
-i7-8700 under Windows Server 2022 with .NET 10.0.10 and BenchmarkDotNet 0.15.8. The comparison used
-PDFsharp 6.2.1 and PdfPig 0.1.11; the benchmark project now pins newer versions, so rerun it before
-treating these ratios as current. Method and comparison notes are in
-[docs/benchmarks.md](https://github.com/WrightDocumentSuite/inkwright/blob/main/docs/benchmarks.md);
-numbers move with the machine, so treat them as a shape rather than a promise.
+Measured on 2026-11-09 with Inkwright 0.1.4, .NET SDK 10.0.403 and runtime 10.0.14 on a shared Xeon Gold 5412U server. Full confidence intervals, exact versions and source commit are in [docs/benchmarks.md](docs/benchmarks.md).
 
-| | Time | Allocated |
-| --- | ---: | ---: |
-| **Inkwright, canvas, 200 pp.** | **46 ms** | **13.6 MB** |
-| PDFsharp 6.2.1, 200 pp. | 177 ms | 38.4 MB |
-| Inkwright, composer, 200 pp. | 345 ms | 110.3 MB |
-| **Inkwright, open a file** | **382 µs** | **188 KB** |
-| PdfPig 0.1.11, open a file | 1,048 µs | 485 KB |
-| **Inkwright, extract text** | **177 ms** | **155 MB** |
-| PdfPig 0.1.11, extract text | 191 ms | 103 MB |
+Primary pass; the full document also reports two complete control repeats.
+
+| Method | Scenario | Mean | Allocated |
+| --- | --- | ---: | ---: |
+| Inkwright | Pages=200 | 160.862 ms | 106.325 MiB |
+| InkwrightCanvas | Pages=200 | 20.627 ms | 13.268 MiB |
+| PdfSharp | Pages=200 | 37.538 ms | 37.166 MiB |
+| InkwrightOpen |  | 207.969 µs | 198.875 KiB |
+| PdfPigOpen |  | 388.336 µs | 509.117 KiB |
+| InkwrightExtract |  | 103.443 ms | 175.504 MiB |
+| PdfPigExtract |  | 109.770 ms | 124.361 MiB |
+| InkwrightRewrite |  | 487.287 µs | 455.359 KiB |
+
+Shared-host timings include background-load variation. Compare methods within this snapshot; the older i7-8700 tables describe a different environment.
 
 ## Documentation
 
