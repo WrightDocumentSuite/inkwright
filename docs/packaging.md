@@ -136,7 +136,7 @@ dependencies and adds the local source. Temporary `PackageSmoke` is not part of 
 
 ### Verify behavior, not just compilation
 
-An empty `Main` that builds only proves the nuspec is not broken. More useful is a short program that exercises through the built binaries what changed in this release: it also checks the **public API surface**. Internal types like `PdfNames` are visible to tests via `InternalsVisibleTo`, but not to package consumers вЂ” code in documentation examples that accidentally relied on such a type compiles for you and not for the user.
+An empty `Main` that builds only proves the nuspec is not broken. More useful is a short program that exercises through the built binaries what changed in this release: it also checks the **public API surface**. Internal types like `PdfNames` are visible to tests via `InternalsVisibleTo`, but not to package consumers Р Р†Р вЂљРІР‚Сњ code in documentation examples that accidentally relied on such a type compiles for you and not for the user.
 
 ## Publish
 
@@ -176,7 +176,7 @@ artifact to a stable version or publish it as though it came from the clean rele
 ## Release handoff
 
 Before the public release commit is built, move the relevant entries from `Unreleased` in
-`CHANGELOG.md` to `## $VERSION вЂ” YYYY-MM-DD`, leave a fresh empty `Unreleased` section, and review
+`CHANGELOG.md` to `## $VERSION Р Р†Р вЂљРІР‚Сњ YYYY-MM-DD`, leave a fresh empty `Unreleased` section, and review
 the diff. After all five package pushes succeed:
 
 1. Verify all five exact versions are indexed on nuget.org, their dependency links resolve, and
@@ -190,7 +190,7 @@ the diff. After all five package pushes succeed:
    five `.snupkg` files. Record any indexing delay or exceptional manual step in the release notes.
 
 If package publication stops part-way, do not create the tag or GitHub Release. Resolve the partial
-NuGet state explicitlyвЂ”published versions are immutableвЂ”then choose a new patch version for rebuilt
+NuGet state explicitlyР Р†Р вЂљРІР‚Сњpublished versions are immutableР Р†Р вЂљРІР‚Сњthen choose a new patch version for rebuilt
 artifacts.
 
 Packing also produces one `.snupkg` beside every ordinary package. Source Link maps its portable PDB
@@ -212,3 +212,7 @@ The test projects deliberately use `xunit.v3.mtp-off` 3.2.2 with the VSTest adap
 This retains the existing `dotnet test`, TRX, filters, and coverage commands while
 removing the unused, deprecated Microsoft.Testing.Platform.MSBuild 1.9.1 dependency.
 Do not switch to the MTP v2 package without migrating those commands together.
+
+Main now validates against the published 0.1.5 API. The commands above reproduce the 0.1.5 release, which was validated against 0.1.4; use the latest published baseline for a later release.
+
+For a just-published dependency, isolate both `NUGET_PACKAGES` and `NUGET_HTTP_CACHE_PATH`. A clean packages directory alone can still reuse an older HTTP version index and produce NU1102. Use `dotnet restore --no-http-cache` when refreshing the new release graph, then repeat locked restore; do not clear unrelated developer caches.
